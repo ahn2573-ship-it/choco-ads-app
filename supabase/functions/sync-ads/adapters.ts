@@ -202,26 +202,104 @@ export class NaverSearchAdAdapter implements AdAdapter {
   }
 
   async fetchDaily({ statDate }: FetchParams): Promise<NormalizedRow[]> {
-    // 1) 소재 성과 보고서(AD)
+    const dateCompact = statDate.replace(/-/g, ""); // 20260726
+
+    // -----------------------------------------------------------------------
+    // 1) 광고효과보고서(AD): 노출·클릭·비용·평균순위
+    // -----------------------------------------------------------------------
     const adUrl = await this.buildReport("AD", statDate);
     if (!adUrl) return [];
     const adRows = await this.downloadTsv(adUrl);
 
-    // === 진단: 실제 TSV 구조를 로그로 남긴다 (컬럼 매핑 확정용) ===
-    // Supabase Edge Functions > sync-ads > Logs 에서 확인 가능.
-    console.log("[진단] AD 보고서 총 행수:", adRows.length);
-    for (let i = 0; i < Math.min(3, adRows.length); i++) {
-      console.log(`[진단] 행${i} (${adRows[i].length}컬럼):`, JSON.stringify(adRows[i]));
+    console.log("[진단] AD 총행:", adRows.length);
+    const adSample = adRows.find((c) => c.some((v) => /^nad-/.test(v)));
+    if (adSample) {
+      console.log("[진단] AD 컬럼:", JSON.stringify(adSample.map((v, i) => `[${i}]${v}`)));
     }
-    // 소재ID 가 들어있는 첫 행을 찾아 컬럼 인덱스별로 펼쳐 보여준다.
-    const sample = adRows.find((c) => c.some((v) => /^nad-/.test(v)));
-    if (sample) {
-      console.log("[진단] 소재행 컬럼별:",
-        JSON.stringify(sample.map((v, idx) => `[${idx}]${v}`)));
-    }
-    // === 진단 끝 ===
 
-    // 2) 소재 마스터(AD) — 소재의 최종 링크에서 상품번호를 얻는다. 실패해도 성과는 처리.
+    // 소재 단위로 노출·클릭·비용·순위를 합산.
+    // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
+    //             [4]keyword(-) [5]adId [6]bizChannelId [7]?? [8]device
+    //             [9]노출 [10]클릭 [11]비용 [12]?? [13]??  ← device 다음이 지표
+    // device(M/P) 컬럼 위치를 찾아, 그 다음 3칸을 노출/클릭/비용으로 잡는다.
+    const perf = new Map<string, {
+      impressions: number; clicks: number; cost: number;
+      rankSum: number; rankImp: number;
+    }>();
+
+    for (const cols of adRows) {
+      const adIdIdx = cols.findIndex((c) => /^nad-/.test(c));
+      if (adIdIdx === -1) continue;
+      const rowDate = cols.find((c) => /^\d{8}$/.test(c));
+      if (rowDate && rowDate !== dateCompact) continue;
+
+      const adId = cols[adIdIdx];
+      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+      // 지표 시작 = device 다음 칸. device 를 못 찾으면 adId+3(bizChannel,code,device) 뒤로 추정.
+      const base = devIdx !== -1 ? devIdx + 1 : adIdIdx + 4;
+      const n = (k: number) => {
+        const raw = cols[base + k];
+        const v = raw ? Number(raw.replace(/,/g, "")) : 0;
+        return Number.isFinite(v) ? v : 0;
+      };
+      // AD 보고서 지표 순서: impCnt, clkCnt, salesAmt(비용), avgRnk
+      const impressions = n(0);
+      const clicks = n(1);
+      const cost = n(2);
+      const avgRnk = n(3);
+
+      const cur = perf.get(adId) ?? { impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0 };
+      cur.impressions += impressions;
+      cur.clicks += clicks;
+      cur.cost += cost;
+      if (avgRnk > 0 && impressions > 0) { cur.rankSum += avgRnk * impressions; cur.rankImp += impressions; }
+      perf.set(adId, cur);
+    }
+
+    // -----------------------------------------------------------------------
+    // 2) 광고전환보고서(AD_CONVERSION): 전환수·전환매출 (별도 보고서)
+    //    구매완료 전환만 따로 필요하므로 전환유형을 함께 본다.
+    // -----------------------------------------------------------------------
+    const conv = new Map<string, { convCount: number; convRevenue: number; totalCount: number; totalRevenue: number }>();
+    try {
+      const convUrl = await this.buildReport("AD_CONVERSION", statDate, 45);
+      if (convUrl) {
+        const convRows = await this.downloadTsv(convUrl);
+        console.log("[진단] 전환 총행:", convRows.length);
+        const cvSample = convRows.find((c) => c.some((v) => /^nad-/.test(v)));
+        if (cvSample) {
+          console.log("[진단] 전환 컬럼:", JSON.stringify(cvSample.map((v, i) => `[${i}]${v}`)));
+        }
+
+        for (const cols of convRows) {
+          const adId = cols.find((c) => /^nad-/.test(c));
+          if (!adId) continue;
+          const rowDate = cols.find((c) => /^\d{8}$/.test(c));
+          if (rowDate && rowDate !== dateCompact) continue;
+
+          // 전환보고서 지표: ...전환수, 전환매출액. device 뒤 숫자들에서 취한다.
+          const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+          const nums = cols.slice(devIdx !== -1 ? devIdx + 1 : 0)
+            .map((c) => c.replace(/,/g, ""))
+            .filter((c) => /^-?\d+(\.\d+)?$/.test(c))
+            .map(Number);
+          // 전환유형 컬럼이 있을 수 있으나, 우선 전체 전환으로 합산.
+          const [cnt = 0, revenue = 0] = nums;
+          const cur = conv.get(adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
+          cur.convCount += cnt;
+          cur.convRevenue += revenue;
+          cur.totalCount += cnt;
+          cur.totalRevenue += revenue;
+          conv.set(adId, cur);
+        }
+      }
+    } catch (e) {
+      console.log("[진단] 전환보고서 건너뜀:", e instanceof Error ? e.message : String(e));
+    }
+
+    // -----------------------------------------------------------------------
+    // 3) 소재 상세(AD_DETAIL): 소재 최종 링크 → 상품번호
+    // -----------------------------------------------------------------------
     const adToProduct = new Map<string, string>();
     try {
       const masterUrl = await this.buildReport("AD_DETAIL", statDate, 30);
@@ -234,45 +312,35 @@ export class NaverSearchAdAdapter implements AdAdapter {
           if (adId && pid) adToProduct.set(adId, pid);
         }
       }
-    } catch (_) {
-      // 마스터 실패는 치명적이지 않다 — 매핑은 나중에 소재매핑 화면에서 보완 가능.
-    }
+    } catch (_) { /* 매핑은 나중에 보완 가능 */ }
 
-    // 3) AD 보고서 파싱.
-    //    각 행에서 소재ID(nad-...)와 날짜(YYYYMMDD)를 찾고, 나머지 숫자열을 지표로 매핑.
-    //    ⚠️ 진단 로그로 실제 컬럼을 확인한 뒤 정확한 인덱스로 교체 예정.
-    //    임시로: 날짜 컬럼(YYYYMMDD)이 요청일과 같은 행만 처리해 오염을 막는다.
-    const dateCompact = statDate.replace(/-/g, ""); // 20260726
+    // -----------------------------------------------------------------------
+    // 4) 소재ID 기준으로 성과 + 전환 + 상품 조인
+    // -----------------------------------------------------------------------
     const out: NormalizedRow[] = [];
-    for (const cols of adRows) {
-      const adIdIdx = cols.findIndex((c) => /^nad-/.test(c));
-      if (adIdIdx === -1) continue;
-      // 이 행의 날짜가 요청일과 다르면 건너뛴다.
-      const rowDate = cols.find((c) => /^\d{8}$/.test(c));
-      if (rowDate && rowDate !== dateCompact) continue;
-
-      const adId = cols[adIdIdx];
-
-      // 표준 AD 보고서 지표 순서(문서 기준):
-      // impCnt, clkCnt, cost(salesAmt), sumAvgRnk/avgRnk, ccnt, convAmt ...
-      // 지표는 adId 이후의 "순수 숫자" 컬럼들로 이어진다. 앞에서부터 6개를 취한다.
-      const nums = cols.slice(adIdIdx + 1)
-        .map((c) => c.replace(/,/g, ""))
-        .filter((c) => c !== "" && /^-?\d+(\.\d+)?$/.test(c))
-        .map(Number);
-
-      const [impCnt = 0, clkCnt = 0, cost = 0, avgRnk = 0, ccnt = 0, convAmt = 0] = nums;
-
+    for (const [adId, p] of perf) {
+      const c = conv.get(adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
+      const avgRnk = p.rankImp > 0 ? p.rankSum / p.rankImp : 0;
       out.push(mapRow({
         adId,
         productId: adToProduct.get(adId),
-        impCnt, clkCnt, salesAmt: cost, avgRnk, ccnt, convAmt,
+        impCnt: p.impressions,
+        clkCnt: p.clicks,
+        salesAmt: p.cost,
+        avgRnk,
+        ccnt: c.convCount,
+        convAmt: c.convRevenue,
+        totalConvCnt: c.totalCount,
+        totalConvAmt: c.totalRevenue,
         statDt: statDate,
       }, statDate));
     }
+    console.log(`[진단] 조인 결과: 소재 ${out.length}건 (성과 ${perf.size}, 전환 ${conv.size}, 상품매핑 ${adToProduct.size})`);
     return out;
   }
+
 }
+
 
 // 스마트스토어/쇼핑 링크에서 상품번호를 뽑아낸다.
 function extractProductId(url?: string): string | null {
