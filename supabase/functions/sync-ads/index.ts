@@ -103,6 +103,10 @@ Deno.serve(async (req) => {
         break;
       } catch (e) {
         lastError = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        // 보고서 생성 시간 초과는 재시도해도 소용없고 함수 시간만 잡아먹는다.
+        // "잠시 후 다시 시도" 하도록 즉시 중단한다.
+        if (msg.includes("시간 초과") || msg.includes("timeout")) break;
         if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS * attempt);
       }
     }

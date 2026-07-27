@@ -91,13 +91,21 @@ export class MockAdapter implements AdAdapter {
 //   4) /stats?ids=[소재ID들] ...        → 소재별 일별 성과
 // ID 타입은 섞을 수 없으므로 소재 ID 만 모아 배치로 조회한다.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 네이버 검색광고 어댑터 — 대용량 보고서(StatReport) 방식
+//
+// 소재가 많아도 호출 몇 번으로 끝난다.
+//   1) POST /stat-reports { reportTp: "AD", statDt: "YYYY-MM-DD" }  → 보고서 생성 요청
+//   2) GET  /stat-reports/{id}  상태가 BUILT/DONE 될 때까지 폴링
+//   3) 완성된 downloadUrl(TSV) 다운로드 → 파싱
+//   4) 소재-상품 매핑은 별도 MasterReport(AD) 로 소재의 최종 URL 을 받아 상품번호 추출
+//
+// AD 보고서는 소재(nccAdId) 단위 일별 성과를 제공한다(엑셀 result2 와 동일 축).
+// ---------------------------------------------------------------------------
 async function hmacSha256Base64(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
   );
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
@@ -105,17 +113,27 @@ async function hmacSha256Base64(secret: string, message: string): Promise<string
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// AD 통계 보고서(TSV)의 컬럼 순서. 네이버 문서 기준.
+// customerId, date, campaignId, adgroupId, keywordId, adId,
+// businessChannelId(=pcMobileType 등 버전별 상이) ... impCnt, clkCnt, cost, ...
+// 버전에 따라 컬럼이 달라질 수 있어, 숫자열 위치를 라벨로 잡지 않고
+// "소재ID 컬럼 + 뒤쪽 지표 컬럼" 을 유연하게 매핑한다.
+interface StatReportMeta {
+  id: string;
+  status: string;
+  downloadUrl?: string;
+}
+
 export class NaverSearchAdAdapter implements AdAdapter {
   name = "naver_searchad";
 
   constructor(
-    private baseUrl: string,      // https://api.naver.com
+    private baseUrl: string,   // https://api.naver.com
     private apiKey: string,
     private secretKey: string,
     private customerId: string,
   ) {}
 
-  // 서명은 반드시 "경로(path)"만으로 만든다. 쿼리스트링은 제외.
   private async headers(method: string, path: string) {
     const ts = Date.now().toString();
     const signature = await hmacSha256Base64(this.secretKey, `${ts}.${method}.${path}`);
@@ -128,106 +146,118 @@ export class NaverSearchAdAdapter implements AdAdapter {
     };
   }
 
-  private async get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
-    const qs = new URLSearchParams(query).toString();
-    const url = `${this.baseUrl}${path}${qs ? "?" + qs : ""}`;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const res = await fetch(url, { headers: await this.headers("GET", path) });
-      if (res.status === 429) { await sleep(500 * attempt); continue; } // Rate limit
-      if (!res.ok) {
-        throw new Error(`네이버 API ${res.status} (${path}): ${(await res.text()).slice(0, 200)}`);
-      }
-      return await res.json() as T;
+  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: await this.headers(method, path),
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      throw new Error(`네이버 API ${res.status} (${method} ${path}): ${(await res.text()).slice(0, 200)}`);
     }
-    throw new Error(`네이버 API 재시도 초과: ${path}`);
+    return await res.json() as T;
+  }
+
+  // 지정 타입의 보고서를 생성하고, 완성될 때까지 폴링해 downloadUrl 을 돌려준다.
+  // maxWaitSec: 폴링 총 대기 상한. 함수 실행 제한 안에 들어오도록 짧게 잡는다.
+  private async buildReport(
+    reportTp: string, statDate: string, maxWaitSec = 60,
+  ): Promise<string | null> {
+    const created = await this.req<StatReportMeta>("POST", "/stat-reports", {
+      reportTp,
+      statDt: `${statDate}T00:00:00.000Z`,
+    });
+
+    const intervalSec = 3;
+    const tries = Math.floor(maxWaitSec / intervalSec);
+    for (let i = 0; i < tries; i++) {
+      await sleep(intervalSec * 1000);
+      const meta = await this.req<StatReportMeta>("GET", `/stat-reports/${created.id}`);
+      const st = (meta.status || "").toUpperCase();
+      if (st === "BUILT" || st === "DONE") return meta.downloadUrl ?? null;
+      if (st === "ERROR" || st === "NONE") {
+        throw new Error(`보고서 생성 실패 (${reportTp}): status=${meta.status}`);
+      }
+    }
+    throw new Error(`보고서 생성 시간 초과 (${reportTp}). 잠시 후 다시 시도하세요.`);
+  }
+
+  // downloadUrl 의 TSV 를 받아 행 배열로 반환.
+  private async downloadTsv(url: string): Promise<string[][]> {
+    // 다운로드 URL 은 절대경로일 수도, /report-download 상대경로일 수도 있다.
+    const path = url.startsWith("http")
+      ? new URL(url).pathname + new URL(url).search
+      : url;
+    const res = await fetch(url.startsWith("http") ? url : `${this.baseUrl}${url}`, {
+      headers: await this.headers("GET", path.split("?")[0]),
+    });
+    if (!res.ok) throw new Error(`보고서 다운로드 실패 ${res.status}`);
+    const text = await res.text();
+    return text.split("\n").filter((l) => l.trim() !== "").map((l) => l.split("\t"));
   }
 
   async fetchDaily({ statDate }: FetchParams): Promise<NormalizedRow[]> {
-    // 1) 캠페인
-    const campaigns = await this.get<Array<{ nccCampaignId: string }>>("/ncc/campaigns");
-    await sleep(300);
+    // 1) 소재 성과 보고서(AD)
+    const adUrl = await this.buildReport("AD", statDate);
+    if (!adUrl) return [];
+    const adRows = await this.downloadTsv(adUrl);
 
-    // 2) 광고그룹 (캠페인별)
-    const adgroupIds: string[] = [];
-    for (const c of campaigns) {
-      const groups = await this.get<Array<{ nccAdgroupId: string }>>(
-        "/ncc/adgroups", { nccCampaignId: c.nccCampaignId },
-      );
-      for (const g of groups) adgroupIds.push(g.nccAdgroupId);
-      await sleep(300);
-    }
-
-    // 3) 소재 (광고그룹별). 소재 → 연결 상품/링크 매핑도 여기서 수집.
-    const adIds: string[] = [];
-    const adMeta = new Map<string, { pcUrl?: string; mobileUrl?: string }>();
-    for (const gid of adgroupIds) {
-      const ads = await this.get<Array<{
-        nccAdId: string;
-        ad?: { pc?: { final?: string }; mobile?: { final?: string } };
-      }>>("/ncc/ads", { nccAdgroupId: gid });
-      for (const a of ads) {
-        adIds.push(a.nccAdId);
-        adMeta.set(a.nccAdId, {
-          pcUrl: a.ad?.pc?.final,
-          mobileUrl: a.ad?.mobile?.final,
-        });
+    // 2) 소재 마스터(AD) — 소재의 최종 링크에서 상품번호를 얻는다. 실패해도 성과는 처리.
+    const adToProduct = new Map<string, string>();
+    try {
+      const masterUrl = await this.buildReport("AD_DETAIL", statDate, 30);
+      if (masterUrl) {
+        const masterRows = await this.downloadTsv(masterUrl);
+        for (const cols of masterRows) {
+          const adId = cols.find((c) => /^nad-/.test(c));
+          const link = cols.find((c) => /https?:\/\//.test(c));
+          const pid = extractProductId(link);
+          if (adId && pid) adToProduct.set(adId, pid);
+        }
       }
-      await sleep(300);
+    } catch (_) {
+      // 마스터 실패는 치명적이지 않다 — 매핑은 나중에 소재매핑 화면에서 보완 가능.
     }
 
-    if (adIds.length === 0) return [];
+    // 3) AD 보고서 파싱.
+    //    각 행에서 소재ID(nad-...)와 날짜(YYYYMMDD)를 찾고, 나머지 숫자열을 지표로 매핑.
+    //    네이버 AD 보고서 표준 컬럼:
+    //    [0]customerId [1]date [2]campaignId [3]adgroupId [4]keywordId(-) [5]adId
+    //    [6]businessChannelId [7]media... 지표는 뒤쪽에.
+    //    버전차를 흡수하기 위해 adId 위치를 기준으로 잡는다.
+    const out: NormalizedRow[] = [];
+    for (const cols of adRows) {
+      const adIdIdx = cols.findIndex((c) => /^nad-/.test(c));
+      if (adIdIdx === -1) continue;
+      const adId = cols[adIdIdx];
 
-    // 4) 소재별 통계. ids 는 한 번에 너무 많으면 안 되므로 배치로 나눈다.
-    const fields = JSON.stringify([
-      "impCnt", "clkCnt", "salesAmt", "avgRnk", "ccnt", "convAmt", "crto", "ror",
-    ]);
-    const timeRange = JSON.stringify({ since: statDate, until: statDate });
+      // 표준 AD 보고서 지표 순서(문서 기준):
+      // impCnt, clkCnt, cost(salesAmt), sumAvgRnk/avgRnk, ccnt, convAmt ...
+      // 지표는 adId 이후의 "순수 숫자" 컬럼들로 이어진다. 앞에서부터 6개를 취한다.
+      const nums = cols.slice(adIdIdx + 1)
+        .map((c) => c.replace(/,/g, ""))
+        .filter((c) => c !== "" && /^-?\d+(\.\d+)?$/.test(c))
+        .map(Number);
 
-    const rows: NormalizedRow[] = [];
-    const BATCH = 100;
-    for (let i = 0; i < adIds.length; i += BATCH) {
-      const batch = adIds.slice(i, i + BATCH);
-      const stats = await this.get<{ data?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>>(
-        "/stats",
-        {
-          ids: JSON.stringify(batch),
-          fields,
-          timeRange,
-          timeIncrement: "1",
-        },
-      );
-      const list = Array.isArray(stats) ? stats : (stats.data ?? []);
-      for (const s of list) {
-        // 소재에 연결된 상품ID는 최종 URL(스마트스토어 링크)에서 추출한다.
-        const meta = adMeta.get(String((s as Record<string, unknown>).id ?? ""));
-        const productId = extractProductId(meta?.pcUrl) ?? extractProductId(meta?.mobileUrl);
-        rows.push(mapRow({
-          adId: (s as Record<string, unknown>).id,
-          // 상품ID 를 넣어두면 매퍼가 mallProductId 로 인식한다.
-          productId: productId ?? undefined,
-          impCnt: (s as Record<string, unknown>).impCnt,
-          clkCnt: (s as Record<string, unknown>).clkCnt,
-          salesAmt: (s as Record<string, unknown>).salesAmt,
-          avgRnk: (s as Record<string, unknown>).avgRnk,
-          ccnt: (s as Record<string, unknown>).ccnt,
-          convAmt: (s as Record<string, unknown>).convAmt,
-          statDt: statDate,
-        }, statDate));
-      }
-      await sleep(400); // Rate limit 방지
+      const [impCnt = 0, clkCnt = 0, cost = 0, avgRnk = 0, ccnt = 0, convAmt = 0] = nums;
+
+      out.push(mapRow({
+        adId,
+        productId: adToProduct.get(adId),
+        impCnt, clkCnt, salesAmt: cost, avgRnk, ccnt, convAmt,
+        statDt: statDate,
+      }, statDate));
     }
-    return rows;
+    return out;
   }
 }
 
 // 스마트스토어/쇼핑 링크에서 상품번호를 뽑아낸다.
-// 예: https://smartstore.naver.com/xxx/products/4141857911
 function extractProductId(url?: string): string | null {
   if (!url) return null;
   const m = url.match(/\/products\/(\d+)/) || url.match(/[?&]nvMid=(\d+)/) || url.match(/(\d{9,})/);
   return m ? m[1] : null;
 }
-
 
 export function createAdapter(env: Record<string, string | undefined>): AdAdapter {
   const mode = (env.AD_API_MODE ?? "mock").toLowerCase();
