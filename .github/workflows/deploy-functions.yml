@@ -1,35 +1,55 @@
 name: Deploy Supabase Edge Functions
 
-# 8단계(자동 수집)를 진행할 때만 필요합니다.
-# 아래 Secrets 가 등록돼 있을 때만 실행되므로, 등록 전에는 조용히 건너뜁니다.
+# 8단계(자동 수집)용. GitHub Secrets 가 준비돼 있을 때만 실행됩니다.
 on:
   push:
     branches: [main]
     paths:
       - "supabase/functions/**"
-  workflow_dispatch:
+  workflow_dispatch:   # Actions 탭에서 수동 실행
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 토큰 확인
+
+      - name: 준비 상태 확인
         id: check
         run: |
           if [ -n "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ] && [ -n "${{ secrets.SUPABASE_PROJECT_REF }}" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Supabase 토큰 미설정 — 8단계 전이므로 건너뜁니다."
+            echo "::notice::Supabase 토큰이 없어 배포를 건너뜁니다 (8단계 전)."
           fi
+
       - uses: supabase/setup-cli@v1
         if: steps.check.outputs.ready == 'true'
         with:
           version: latest
-      - name: Deploy
+
+      # 1) 광고 API 키들을 Supabase 서버(Edge Function 환경변수)에 등록.
+      #    이 키들은 여기서만 서버로 전달되고, 브라우저 번들에는 절대 들어가지 않는다.
+      - name: Supabase secrets 설정
         if: steps.check.outputs.ready == 'true'
-        run: supabase functions deploy sync-ads --project-ref $SUPABASE_PROJECT_REF
+        run: |
+          supabase secrets set \
+            AD_API_MODE="${{ secrets.AD_API_MODE || 'mock' }}" \
+            AD_API_BASE_URL="${{ secrets.AD_API_BASE_URL || 'https://api.searchad.naver.com' }}" \
+            AD_API_KEY="${{ secrets.AD_API_KEY }}" \
+            AD_API_SECRET="${{ secrets.AD_API_SECRET }}" \
+            AD_API_CUSTOMER_ID="${{ secrets.AD_API_CUSTOMER_ID }}" \
+            AD_API_REPORT_PATH="${{ secrets.AD_API_REPORT_PATH || '/stats' }}" \
+            --project-ref "$SUPABASE_PROJECT_REF"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+
+      # 2) 함수 배포
+      - name: Edge Function 배포
+        if: steps.check.outputs.ready == 'true'
+        run: supabase functions deploy sync-ads --project-ref "$SUPABASE_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
