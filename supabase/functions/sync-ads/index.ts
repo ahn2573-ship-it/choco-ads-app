@@ -155,6 +155,22 @@ Deno.serve(async (req) => {
     });
   }
 
+  // 소재별 광고유형(파워링크/브랜드검색 등)도 가져온다.
+  // 상품 매핑이 없는 소재라도 광고유형이 있으면 '기타 광고 유형'으로 분류된다.
+  const creativeAdType = new Map<string, string>();
+  {
+    const { data: crs } = await supabase
+      .from("creatives")
+      .select("creative_id, ad_type_label")
+      .eq("ad_account_id", accountId)
+      .not("ad_type_label", "is", null);
+    for (const c of crs ?? []) {
+      // deno-lint-ignore no-explicit-any
+      const label = (c as any).ad_type_label;
+      if (label) creativeAdType.set(c.creative_id, label);
+    }
+  }
+
   // 소재 매핑이 없을 때는 API 가 준 상품 ID 로도 한 번 더 찾아본다.
   const rawMallIds = [...new Set(deduped.map((r) => r.mallProductId).filter(Boolean))] as string[];
   const byMallId = new Map<string, string>();
@@ -170,13 +186,15 @@ Deno.serve(async (req) => {
     const mallProductId = r.mallProductId ?? viaCreative?.mallProductId ?? null;
     const productId = viaCreative?.productId ??
       (r.mallProductId ? byMallId.get(r.mallProductId) ?? null : null);
+    // 상품 매핑이 없으면, 소재에 등록된 광고유형(파워링크 등)을 라벨로 채운다.
+    const adTypeLabel = productId ? null : (r.adTypeLabel ?? creativeAdType.get(r.creativeId) ?? null);
     return {
       ad_account_id: accountId,
       stat_date: r.statDate,
       creative_id: r.creativeId,
       product_id: productId,
       mall_product_id: mallProductId,
-      ad_type_label: r.adTypeLabel,
+      ad_type_label: adTypeLabel,
       impressions: r.impressions,
       clicks: r.clicks,
       cost: r.cost,
