@@ -1,5 +1,7 @@
 name: Deploy Supabase Edge Functions
 
+# 8단계(자동 수집)를 진행할 때만 필요합니다.
+# 아래 Secrets 가 등록돼 있을 때만 실행되므로, 등록 전에는 조용히 건너뜁니다.
 on:
   push:
     branches: [main]
@@ -12,10 +14,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: 토큰 확인
+        id: check
+        run: |
+          if [ -n "${{ secrets.SUPABASE_ACCESS_TOKEN }}" ] && [ -n "${{ secrets.SUPABASE_PROJECT_REF }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Supabase 토큰 미설정 — 8단계 전이므로 건너뜁니다."
+          fi
       - uses: supabase/setup-cli@v1
+        if: steps.check.outputs.ready == 'true'
         with:
           version: latest
-      - run: supabase functions deploy sync-ads --project-ref $SUPABASE_PROJECT_REF
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        run: supabase functions deploy sync-ads --project-ref $SUPABASE_PROJECT_REF
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
