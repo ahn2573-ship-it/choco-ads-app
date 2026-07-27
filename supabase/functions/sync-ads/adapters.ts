@@ -207,6 +207,20 @@ export class NaverSearchAdAdapter implements AdAdapter {
     if (!adUrl) return [];
     const adRows = await this.downloadTsv(adUrl);
 
+    // === 진단: 실제 TSV 구조를 로그로 남긴다 (컬럼 매핑 확정용) ===
+    // Supabase Edge Functions > sync-ads > Logs 에서 확인 가능.
+    console.log("[진단] AD 보고서 총 행수:", adRows.length);
+    for (let i = 0; i < Math.min(3, adRows.length); i++) {
+      console.log(`[진단] 행${i} (${adRows[i].length}컬럼):`, JSON.stringify(adRows[i]));
+    }
+    // 소재ID 가 들어있는 첫 행을 찾아 컬럼 인덱스별로 펼쳐 보여준다.
+    const sample = adRows.find((c) => c.some((v) => /^nad-/.test(v)));
+    if (sample) {
+      console.log("[진단] 소재행 컬럼별:",
+        JSON.stringify(sample.map((v, idx) => `[${idx}]${v}`)));
+    }
+    // === 진단 끝 ===
+
     // 2) 소재 마스터(AD) — 소재의 최종 링크에서 상품번호를 얻는다. 실패해도 성과는 처리.
     const adToProduct = new Map<string, string>();
     try {
@@ -226,14 +240,17 @@ export class NaverSearchAdAdapter implements AdAdapter {
 
     // 3) AD 보고서 파싱.
     //    각 행에서 소재ID(nad-...)와 날짜(YYYYMMDD)를 찾고, 나머지 숫자열을 지표로 매핑.
-    //    네이버 AD 보고서 표준 컬럼:
-    //    [0]customerId [1]date [2]campaignId [3]adgroupId [4]keywordId(-) [5]adId
-    //    [6]businessChannelId [7]media... 지표는 뒤쪽에.
-    //    버전차를 흡수하기 위해 adId 위치를 기준으로 잡는다.
+    //    ⚠️ 진단 로그로 실제 컬럼을 확인한 뒤 정확한 인덱스로 교체 예정.
+    //    임시로: 날짜 컬럼(YYYYMMDD)이 요청일과 같은 행만 처리해 오염을 막는다.
+    const dateCompact = statDate.replace(/-/g, ""); // 20260726
     const out: NormalizedRow[] = [];
     for (const cols of adRows) {
       const adIdIdx = cols.findIndex((c) => /^nad-/.test(c));
       if (adIdIdx === -1) continue;
+      // 이 행의 날짜가 요청일과 다르면 건너뛴다.
+      const rowDate = cols.find((c) => /^\d{8}$/.test(c));
+      if (rowDate && rowDate !== dateCompact) continue;
+
       const adId = cols[adIdIdx];
 
       // 표준 AD 보고서 지표 순서(문서 기준):
