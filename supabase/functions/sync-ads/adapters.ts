@@ -234,7 +234,28 @@ export class NaverSearchAdAdapter implements AdAdapter {
       const camp = cols.find((c) => /^cmp-/.test(c));
       if (camp) campSet.add(camp);
     }
-    console.log("[진단] 캠페인 종류 수:", campSet.size, "| 예시:", JSON.stringify([...campSet].slice(0, 5)));
+    console.log("[진단] 캠페인 종류 수:", campSet.size);
+
+    // 진단: 특정 소재 하나가 몇 행으로 쪼개져 각각 어떤 값인지 본다.
+    const targetAd = "nad-a001-02-000000256005379";
+    const targetRows = adRows.filter((c) => c.includes(targetAd));
+    console.log(`[진단] 소재 ${targetAd.slice(-8)} 는 ${targetRows.length}행:`);
+    for (const r of targetRows.slice(0, 8)) {
+      console.log("   ", JSON.stringify(r));
+    }
+
+    // 진단: 전체 행의 노출/클릭/비용 총합을 그냥 다 더해본다 (합산 방식 검증용).
+    let sumImp = 0, sumClk = 0, sumCost = 0, validRows = 0;
+    for (const cols of adRows) {
+      if (!cols.some((c) => /^nad-/.test(c))) continue;
+      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+      if (devIdx === -1) continue;
+      validRows++;
+      sumImp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
+      sumClk += Number((cols[devIdx + 2] ?? "0").replace(/,/g, "")) || 0;
+      sumCost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
+    }
+    console.log(`[진단] 전체합산(device+1,2,3): 유효행=${validRows} 노출=${sumImp} 클릭=${sumClk} 비용=${sumCost}`);
 
     // 소재 단위로 노출·클릭·비용·순위를 합산.
     // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
