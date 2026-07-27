@@ -211,51 +211,40 @@ export class NaverSearchAdAdapter implements AdAdapter {
     if (!adUrl) return [];
     const adRows = await this.downloadTsv(adUrl);
 
-    console.log("[진단] AD 총행:", adRows.length);
-    const adSample = adRows.find((c) => c.some((v) => /^nad-/.test(v)));
-    if (adSample) {
-      console.log("[진단] AD 컬럼:", JSON.stringify(adSample.map((v, i) => `[${i}]${v}`)));
-    }
-
-    // 진단: 보고서 안에 어떤 날짜들이 섞여 있는지 집계.
-    // 5449행이 어느 날짜로 분포하는지 보면, 제외된 5239행이 정말 다른 날짜인지 확인 가능.
-    const dateCounts = new Map<string, number>();
-    for (const cols of adRows) {
-      if (!cols.some((c) => /^nad-/.test(c))) continue;
-      const d = cols.find((c) => /^\d{8}$/.test(c)) ?? "(날짜없음)";
-      dateCounts.set(d, (dateCounts.get(d) ?? 0) + 1);
-    }
-    console.log("[진단] 보고서 날짜 분포:", JSON.stringify([...dateCounts.entries()]));
-    console.log("[진단] 요청 날짜:", dateCompact);
-
-    // 진단: 캠페인 종류가 몇 개인지 (파워링크/쇼핑/브랜드가 다 들어왔는지 가늠).
+    // 진단: 캠페인 종류 수 (파워링크/쇼핑/브랜드가 다 들어왔는지).
     const campSet = new Set<string>();
     for (const cols of adRows) {
       const camp = cols.find((c) => /^cmp-/.test(c));
       if (camp) campSet.add(camp);
     }
-    console.log("[진단] 캠페인 종류 수:", campSet.size);
+    console.log("[진단] AD 총행:", adRows.length, "| 캠페인수:", campSet.size);
 
-    // 진단: 특정 소재 하나가 몇 행으로 쪼개져 각각 어떤 값인지 본다.
-    const targetAd = "nad-a001-02-000000256005379";
-    const targetRows = adRows.filter((c) => c.includes(targetAd));
-    console.log(`[진단] 소재 ${targetAd.slice(-8)} 는 ${targetRows.length}행:`);
-    for (const r of targetRows.slice(0, 8)) {
-      console.log("   ", JSON.stringify(r));
+    // 진단: 클릭 또는 비용이 0이 아닌 행을 몇 개 보여준다 (지표 컬럼 위치 확정용).
+    let shown = 0;
+    for (const cols of adRows) {
+      if (shown >= 6) break;
+      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+      if (devIdx === -1) continue;
+      const after = cols.slice(devIdx + 1).map((c) => Number(c.replace(/,/g, "")) || 0);
+      // device 뒤 숫자 중 큰 값(비용 후보, 100 이상)이 있는 행만.
+      if (after.some((v) => v >= 100)) {
+        console.log(`[진단] 값있는행 dev@${devIdx}:`, JSON.stringify(cols.slice(devIdx)));
+        shown++;
+      }
     }
 
-    // 진단: 전체 행의 노출/클릭/비용 총합을 그냥 다 더해본다 (합산 방식 검증용).
-    let sumImp = 0, sumClk = 0, sumCost = 0, validRows = 0;
+    // 진단: device 뒤 각 위치별 총합을 따로 내본다. 어느 위치가 노출/비용인지 총합으로 판별.
+    const colSums: number[] = [0, 0, 0, 0, 0, 0];
     for (const cols of adRows) {
       if (!cols.some((c) => /^nad-/.test(c))) continue;
       const devIdx = cols.findIndex((c) => c === "M" || c === "P");
       if (devIdx === -1) continue;
-      validRows++;
-      sumImp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
-      sumClk += Number((cols[devIdx + 2] ?? "0").replace(/,/g, "")) || 0;
-      sumCost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
+      for (let k = 0; k < 6; k++) {
+        colSums[k] += Number((cols[devIdx + 1 + k] ?? "0").replace(/,/g, "")) || 0;
+      }
     }
-    console.log(`[진단] 전체합산(device+1,2,3): 유효행=${validRows} 노출=${sumImp} 클릭=${sumClk} 비용=${sumCost}`);
+    console.log("[진단] device뒤 위치별 총합 [+1..+6]:", JSON.stringify(colSums));
+    console.log("[진단] 실제기대: 노출≈47859 클릭≈501 비용≈618953");
 
     // 소재 단위로 노출·클릭·비용·순위를 합산.
     // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
