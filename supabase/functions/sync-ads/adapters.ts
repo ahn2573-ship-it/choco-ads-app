@@ -256,6 +256,12 @@ export class NaverSearchAdAdapter implements AdAdapter {
       perf.set(adId, cur);
     }
 
+    // 진단: 노출이 가장 많은 소재 3건의 파싱 결과를 보여준다 (컬럼 매핑 검증용).
+    const top = [...perf.entries()].sort((a, b) => b[1].impressions - a[1].impressions).slice(0, 3);
+    for (const [id, v] of top) {
+      console.log(`[진단] AD파싱 ${id.slice(-8)}: 노출=${v.impressions} 클릭=${v.clicks} 비용=${v.cost}`);
+    }
+
     // -----------------------------------------------------------------------
     // 2) 광고전환보고서(AD_CONVERSION): 전환수·전환매출 (별도 보고서)
     //    구매완료 전환만 따로 필요하므로 전환유형을 함께 본다.
@@ -277,19 +283,26 @@ export class NaverSearchAdAdapter implements AdAdapter {
           const rowDate = cols.find((c) => /^\d{8}$/.test(c));
           if (rowDate && rowDate !== dateCompact) continue;
 
-          // 전환보고서 지표: ...전환수, 전환매출액. device 뒤 숫자들에서 취한다.
-          const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-          const nums = cols.slice(devIdx !== -1 ? devIdx + 1 : 0)
-            .map((c) => c.replace(/,/g, ""))
-            .filter((c) => /^-?\d+(\.\d+)?$/.test(c))
-            .map(Number);
-          // 전환유형 컬럼이 있을 수 있으나, 우선 전체 전환으로 합산.
-          const [cnt = 0, revenue = 0] = nums;
+          // 전환 보고서 구조(확인됨):
+          //   ... [device M/P] [?] [전환유형: purchase 등] [전환수] [전환매출]
+          // 전환유형 문자열 위치를 기준으로 전환수/매출을 읽는다.
+          const typeIdx = cols.findIndex((c) => /^[a-z_]+$/i.test(c) && c !== "M" && c !== "P");
+          let cnt = 0, revenue = 0, convType = "";
+          if (typeIdx !== -1) {
+            convType = cols[typeIdx].toLowerCase();
+            cnt = Number((cols[typeIdx + 1] ?? "0").replace(/,/g, "")) || 0;
+            revenue = Number((cols[typeIdx + 2] ?? "0").replace(/,/g, "")) || 0;
+          }
+
           const cur = conv.get(adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
-          cur.convCount += cnt;
-          cur.convRevenue += revenue;
+          // 총 전환에는 모든 유형을 합산.
           cur.totalCount += cnt;
           cur.totalRevenue += revenue;
+          // 구매완료(purchase)만 '구매완료 전환' 으로 따로 집계.
+          if (convType.includes("purchase") || convType.includes("pcsale") || convType.includes("buy")) {
+            cur.convCount += cnt;
+            cur.convRevenue += revenue;
+          }
           conv.set(adId, cur);
         }
       }
