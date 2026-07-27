@@ -118,12 +118,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // businessChannelId(=pcMobileType 등 버전별 상이) ... impCnt, clkCnt, cost, ...
 // 버전에 따라 컬럼이 달라질 수 있어, 숫자열 위치를 라벨로 잡지 않고
 // "소재ID 컬럼 + 뒤쪽 지표 컬럼" 을 유연하게 매핑한다.
-interface StatReportMeta {
-  id: string;
-  status: string;
-  downloadUrl?: string;
-}
-
 export class NaverSearchAdAdapter implements AdAdapter {
   name = "naver_searchad";
 
@@ -163,20 +157,31 @@ export class NaverSearchAdAdapter implements AdAdapter {
   private async buildReport(
     reportTp: string, statDate: string, maxWaitSec = 60,
   ): Promise<string | null> {
-    const created = await this.req<StatReportMeta>("POST", "/stat-reports", {
+    // statDt 는 "YYYY-MM-DD" 형식이어야 한다. 타임스탬프를 붙이면 11001 이 난다.
+    const created = await this.req<Record<string, unknown>>("POST", "/stat-reports", {
       reportTp,
-      statDt: `${statDate}T00:00:00.000Z`,
+      statDt: statDate,
     });
+
+    // 응답에서 보고서 ID 를 꺼낸다. 네이버는 버전에 따라 필드명이 다르므로 여러 후보를 시도.
+    const reportId = pickId(created);
+    if (!reportId) {
+      throw new Error(
+        `보고서 ID 를 응답에서 찾지 못함 (${reportTp}). 응답: ${JSON.stringify(created).slice(0, 300)}`,
+      );
+    }
 
     const intervalSec = 3;
     const tries = Math.floor(maxWaitSec / intervalSec);
     for (let i = 0; i < tries; i++) {
       await sleep(intervalSec * 1000);
-      const meta = await this.req<StatReportMeta>("GET", `/stat-reports/${created.id}`);
-      const st = (meta.status || "").toUpperCase();
-      if (st === "BUILT" || st === "DONE") return meta.downloadUrl ?? null;
-      if (st === "ERROR" || st === "NONE") {
-        throw new Error(`보고서 생성 실패 (${reportTp}): status=${meta.status}`);
+      const meta = await this.req<Record<string, unknown>>("GET", `/stat-reports/${reportId}`);
+      const st = String(meta.status ?? meta.statTp ?? "").toUpperCase();
+      const url = (meta.downloadUrl ?? meta.downloadUri ?? meta.url) as string | undefined;
+      if (st === "BUILT" || st === "DONE" || st === "REGIST" && url) return url ?? null;
+      if (st === "BUILT" || st === "DONE") return url ?? null;
+      if (st === "ERROR" || st === "NONE" || st === "FAIL") {
+        throw new Error(`보고서 생성 실패 (${reportTp}): status=${st}`);
       }
     }
     throw new Error(`보고서 생성 시간 초과 (${reportTp}). 잠시 후 다시 시도하세요.`);
@@ -257,6 +262,17 @@ function extractProductId(url?: string): string | null {
   if (!url) return null;
   const m = url.match(/\/products\/(\d+)/) || url.match(/[?&]nvMid=(\d+)/) || url.match(/(\d{9,})/);
   return m ? m[1] : null;
+}
+
+// POST /stat-reports 응답에서 보고서 ID 를 꺼낸다.
+// 네이버 버전/문서에 따라 필드명이 다르므로 알려진 후보를 모두 시도한다.
+function pickId(obj: Record<string, unknown>): string | null {
+  const candidates = ["reportJobId", "id", "statReportJobId", "jobId", "reportId"];
+  for (const k of candidates) {
+    const v = obj[k];
+    if (v !== undefined && v !== null && String(v) !== "") return String(v);
+  }
+  return null;
 }
 
 export function createAdapter(env: Record<string, string | undefined>): AdAdapter {
