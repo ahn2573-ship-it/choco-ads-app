@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed:build": "python3 scripts/build_seed.py"
+    "seed:build": "python3 scripts/build_seed.py",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
@@ -26,6 +27,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/node": "^22.7.4",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.2",
