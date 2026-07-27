@@ -217,6 +217,25 @@ export class NaverSearchAdAdapter implements AdAdapter {
       console.log("[진단] AD 컬럼:", JSON.stringify(adSample.map((v, i) => `[${i}]${v}`)));
     }
 
+    // 진단: 보고서 안에 어떤 날짜들이 섞여 있는지 집계.
+    // 5449행이 어느 날짜로 분포하는지 보면, 제외된 5239행이 정말 다른 날짜인지 확인 가능.
+    const dateCounts = new Map<string, number>();
+    for (const cols of adRows) {
+      if (!cols.some((c) => /^nad-/.test(c))) continue;
+      const d = cols.find((c) => /^\d{8}$/.test(c)) ?? "(날짜없음)";
+      dateCounts.set(d, (dateCounts.get(d) ?? 0) + 1);
+    }
+    console.log("[진단] 보고서 날짜 분포:", JSON.stringify([...dateCounts.entries()]));
+    console.log("[진단] 요청 날짜:", dateCompact);
+
+    // 진단: 캠페인 종류가 몇 개인지 (파워링크/쇼핑/브랜드가 다 들어왔는지 가늠).
+    const campSet = new Set<string>();
+    for (const cols of adRows) {
+      const camp = cols.find((c) => /^cmp-/.test(c));
+      if (camp) campSet.add(camp);
+    }
+    console.log("[진단] 캠페인 종류 수:", campSet.size, "| 예시:", JSON.stringify([...campSet].slice(0, 5)));
+
     // 소재 단위로 노출·클릭·비용·순위를 합산.
     // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
     //             [4]keyword(-) [5]adId [6]bizChannelId [7]?? [8]device
