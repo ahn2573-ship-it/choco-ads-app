@@ -246,6 +246,41 @@ export class NaverSearchAdAdapter implements AdAdapter {
     console.log("[진단] device뒤 위치별 총합 [+1..+6]:", JSON.stringify(colSums));
     console.log("[진단] 실제기대: 노출≈47859 클릭≈501 비용≈618953");
 
+    // 진단: device 앞 컬럼([7] 노출영역 코드 등) 값별로 노출/비용 총합을 나눠본다.
+    // 어떤 영역이 중복/초과를 만드는지 확인.
+    const byArea = new Map<string, { imp: number; cost: number; rows: number }>();
+    for (const cols of adRows) {
+      if (!cols.some((c) => /^nad-/.test(c))) continue;
+      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+      if (devIdx === -1) continue;
+      // device 바로 앞 칸이 노출영역 코드.
+      const area = cols[devIdx - 1] ?? "?";
+      // 자릿수로 그룹핑 (개별 코드는 너무 많으므로).
+      const areaKey = `${area.length}자리`;
+      const cur = byArea.get(areaKey) ?? { imp: 0, cost: 0, rows: 0 };
+      cur.imp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
+      cur.cost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
+      cur.rows += 1;
+      byArea.set(areaKey, cur);
+    }
+    console.log("[진단] 영역코드 자릿수별:", JSON.stringify([...byArea.entries()]));
+
+    // 진단: 캠페인 유형별(cmp-a001-XX 의 XX) 노출/비용.
+    const byCampType = new Map<string, { imp: number; cost: number }>();
+    for (const cols of adRows) {
+      const camp = cols.find((c) => /^cmp-/.test(c));
+      if (!camp) continue;
+      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
+      if (devIdx === -1) continue;
+      const m = camp.match(/^cmp-a001-(\d+)-/);
+      const type = m ? m[1] : "??";
+      const cur = byCampType.get(type) ?? { imp: 0, cost: 0 };
+      cur.imp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
+      cur.cost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
+      byCampType.set(type, cur);
+    }
+    console.log("[진단] 캠페인유형별(노출/비용):", JSON.stringify([...byCampType.entries()]));
+
     // 소재 단위로 노출·클릭·비용·순위를 합산.
     // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
     //             [4]keyword(-) [5]adId [6]bizChannelId [7]?? [8]device
