@@ -166,6 +166,32 @@ export const api = {
     unwrap(await supabase.from("product_groups").delete().eq("id", id));
   },
 
+  // 특정 상품군에 속한 상품 목록
+  async productsInGroup(groupId: string): Promise<Array<{ id: string; mall_product_id: string; display_name: string | null; base_name: string | null }>> {
+    return unwrap(await supabase.from("products")
+      .select("id, mall_product_id, display_name, base_name")
+      .eq("product_group_id", groupId)
+      .order("display_name"));
+  },
+
+  // 상품군에 아직 안 들어간(또는 다른 군의) 상품을 검색 — 추가 후보용
+  async productsForAssign(q: string, limit = 20): Promise<Array<{ id: string; mall_product_id: string; display_name: string | null; base_name: string | null; product_group_id: string | null }>> {
+    let query = supabase.from("products")
+      .select("id, mall_product_id, display_name, base_name, product_group_id")
+      .limit(limit).order("display_name");
+    if (q) {
+      query = query.or(`display_name.ilike.%${q}%,base_name.ilike.%${q}%,mall_product_id.ilike.%${q}%`);
+    }
+    return unwrap(await query);
+  },
+
+  // 상품의 상품군 배정/해제 (groupId=null 이면 미분류로)
+  async setProductGroup(productId: string, groupId: string | null): Promise<void> {
+    unwrap(await supabase.from("products")
+      .update({ product_group_id: groupId, updated_at: new Date().toISOString() })
+      .eq("id", productId));
+  },
+
   async getProduct(id: string): Promise<Product & { product_groups: { name: string } | null }> {
     return unwrap(await supabase.from("products")
       .select("*, product_groups(name)").eq("id", id).single());
