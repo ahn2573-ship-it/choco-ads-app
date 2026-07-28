@@ -48,6 +48,8 @@ export function Unmapped() {
       setSelected(null);
       qc.invalidateQueries({ queryKey: ["unmapped"] });
       qc.invalidateQueries({ queryKey: ["products"] });
+    } catch (e) {
+      setMessage(`연결 실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }
