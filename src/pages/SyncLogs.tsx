@@ -21,6 +21,12 @@ export function SyncLogs() {
   const [date, setDate] = useState(addDays(seoulToday(), -1));
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // 기간 일괄 수집
+  const [bulkFrom, setBulkFrom] = useState(addDays(seoulToday(), -7));
+  const [bulkTo, setBulkTo] = useState(addDays(seoulToday(), -1));
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  const bulkCancel = useState<{ v: boolean }>({ v: false })[0];
 
   const query = useQuery({
     queryKey: ["sync-logs", accountId],
@@ -46,7 +52,35 @@ export function SyncLogs() {
     }
   }
 
-  if (query.error) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
+  async function runBulk() {
+    if (!accountId) return;
+    if (bulkFrom > bulkTo) { setMessage("시작일이 종료일보다 뒤입니다."); return; }
+    // 날짜 목록 생성 (과거 → 최근)
+    const dates: string[] = [];
+    let d = bulkFrom;
+    while (d <= bulkTo) { dates.push(d); d = addDays(d, 1); }
+    if (dates.length > 40) { setMessage("한 번에 최대 40일까지만 수집할 수 있습니다. 기간을 줄여주세요."); return; }
+
+    bulkCancel.v = false;
+    setBulkRunning(true);
+    setMessage(null);
+    let ok = 0, fail = 0;
+    for (let i = 0; i < dates.length; i++) {
+      if (bulkCancel.v) { setMessage(`중단됨 — ${ok}일 완료, ${fail}일 실패`); break; }
+      setBulkProgress({ done: i, total: dates.length, current: dates[i] });
+      try {
+        const res = await api.triggerSync({ account: accountId, date: dates[i] });
+        if (res.ok) ok++; else fail++;
+      } catch { fail++; }
+      // 각 날짜 사이 잠깐 쉼 (네이버 rate limit 여유)
+      await new Promise((r) => setTimeout(r, 800));
+      qc.invalidateQueries({ queryKey: ["sync-logs"] });
+    }
+    setBulkProgress(null);
+    setBulkRunning(false);
+    if (!bulkCancel.v) setMessage(`기간 수집 완료 — 성공 ${ok}일, 실패 ${fail}일`);
+    qc.invalidateQueries({ queryKey: ["sync-logs"] });
+  }
 
   const rows = query.data ?? [];
 
@@ -74,6 +108,42 @@ export function SyncLogs() {
         같은 날짜를 다시 수집해도 기존 행이 갱신될 뿐 중복으로 쌓이지 않습니다.
         API 호출이 실패하면 최대 3회까지 자동으로 재시도합니다.
       </p>
+
+      {/* 기간 일괄 수집 */}
+      <Card className="mb-3">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <span className="text-xs font-medium">기간 일괄 수집</span>
+          <Input type="date" value={bulkFrom} max={seoulToday()}
+            onChange={(e) => setBulkFrom(e.target.value)}
+            className="h-8 w-36 text-xs" disabled={bulkRunning} />
+          <span className="text-xs text-ink-faint">~</span>
+          <Input type="date" value={bulkTo} max={seoulToday()}
+            onChange={(e) => setBulkTo(e.target.value)}
+            className="h-8 w-36 text-xs" disabled={bulkRunning} />
+          {!bulkRunning ? (
+            <Button variant="primary" onClick={runBulk}>
+              <RefreshCw className="h-3.5 w-3.5" /> 기간 수집 시작
+            </Button>
+          ) : (
+            <Button onClick={() => { bulkCancel.v = true; }}>중단</Button>
+          )}
+          <span className="text-xs text-ink-faint">
+            하루씩 순서대로 수집합니다. 한 번에 최대 40일.
+          </span>
+        </div>
+        {bulkProgress && (
+          <div className="border-t border-line px-4 py-3">
+            <div className="mb-1.5 flex justify-between text-xs">
+              <span>{bulkProgress.current} 수집 중…</span>
+              <span className="text-ink-faint">{bulkProgress.done} / {bulkProgress.total}</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-surface-sunken">
+              <div className="h-full bg-brand-500 transition-all"
+                style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }} />
+            </div>
+          </div>
+        )}
+      </Card>
 
       <Card className="overflow-hidden">
         {query.isLoading ? <TableSkeleton rows={8} cols={8} /> : rows.length === 0 ? (
