@@ -293,3 +293,62 @@ export async function parseResult2File(file: File): Promise<{
 
   return { rows, errors };
 }
+
+// ---------------------------------------------------------------------------
+// 상품군 대량 관리 업로드
+// 양식: 상품명 | 그룹명 | (선택)상품ID  +  별도 열 '상품군 종류'(그룹 목록)
+//   - 상품명↔그룹 매핑으로 상품을 상품군에 연결
+//   - '상품군 종류' 열의 값들은 그룹 자체를 미리 만들어 두는 데 쓴다
+//   - 상품ID 열이 있으면 이름 대신 ID 로 정확히 식별
+// ---------------------------------------------------------------------------
+export interface ParsedGroupBulk {
+  /** 상품↔그룹 연결 (상품명 또는 상품ID 기준) */
+  assignments: Array<{ productName?: string; productId?: string; groupName: string }>;
+  /** 새로 만들 상품군 이름 목록 (중복 제거) */
+  groupNames: string[];
+  errors: string[];
+}
+
+export async function parseGroupBulkFile(file: File): Promise<ParsedGroupBulk> {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+
+  const assignments: ParsedGroupBulk["assignments"] = [];
+  const groupSet = new Set<string>();
+  const errors: string[] = [];
+
+  const pick = (r: Record<string, unknown>, keys: string[]) => {
+    for (const k of keys) {
+      const v = r[k];
+      if (v !== undefined && String(v).trim() !== "") return String(v).trim();
+    }
+    return "";
+  };
+
+  json.forEach((r, i) => {
+    const line = i + 2;
+    const productName = pick(r, ["상품명", "기본 상품명", "노출용 상품명", "productName"]);
+    const productId = pick(r, ["상품ID", "쇼핑몰 상품ID", "상품번호(스마트스토어)", "productId"]);
+    const groupName = pick(r, ["그룹명", "상품군", "groupName"]);
+    // '상품군 종류' 열: 그룹 목록 정의용 (상품 연결과 별개)
+    const groupType = pick(r, ["상품군 종류", "상품군종류", "groupType"]);
+
+    if (groupType) groupSet.add(groupType);
+    if (groupName) groupSet.add(groupName);
+
+    // 상품 연결 행: 그룹명이 있고, 상품명이나 상품ID 중 하나라도 있으면.
+    if (groupName && (productName || productId)) {
+      assignments.push({
+        productName: productName || undefined,
+        productId: productId || undefined,
+        groupName,
+      });
+    } else if (!groupType && (productName || productId) && !groupName) {
+      errors.push(`${line}행: 그룹명이 비어 있습니다.`);
+    }
+  });
+
+  return { assignments, groupNames: [...groupSet], errors };
+}

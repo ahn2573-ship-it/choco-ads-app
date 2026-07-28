@@ -139,6 +139,33 @@ export const api = {
       .eq("is_active", true).order("name"));
   },
 
+  // 상품군 목록 + 소속 상품 수
+  async groupList(): Promise<Array<{ id: string; name: string; product_count: number; is_active: boolean }>> {
+    return unwrap(await supabase.rpc("fn_group_list", { p_account: null }));
+  },
+
+  // 상품군 대량 적용. 결과로 각 항목의 처리 상태(linked/not_found/ambiguous)를 돌려준다.
+  async groupBulkApply(
+    assignments: Array<{ productName?: string; productId?: string; groupName: string }>,
+    groupNames: string[],
+  ): Promise<Array<{ product_name: string | null; product_id: string | null; group_name: string; status: string }>> {
+    return unwrap(await supabase.rpc("fn_group_bulk_apply", {
+      p_assignments: assignments,
+      p_group_names: groupNames,
+    }));
+  },
+
+  // 상품군 이름 변경 / 추가 / 삭제
+  async createGroup(name: string): Promise<void> {
+    unwrap(await supabase.from("product_groups").insert({ name }));
+  },
+  async renameGroup(id: string, name: string): Promise<void> {
+    unwrap(await supabase.from("product_groups").update({ name, updated_at: new Date().toISOString() }).eq("id", id));
+  },
+  async deleteGroup(id: string): Promise<void> {
+    unwrap(await supabase.from("product_groups").delete().eq("id", id));
+  },
+
   async getProduct(id: string): Promise<Product & { product_groups: { name: string } | null }> {
     return unwrap(await supabase.from("products")
       .select("*, product_groups(name)").eq("id", id).single());
