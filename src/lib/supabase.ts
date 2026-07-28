@@ -46,7 +46,7 @@ export const api = {
   async summary(params: {
     account: string; from: string; to: string;
     groupId?: string | null; productId?: string | null;
-    creativeId?: string | null; bucket?: Bucket;
+    creativeId?: string | null; bucket?: Bucket; campaignType?: string | null;
   }): Promise<PeriodSummary> {
     const rows = unwrap<PeriodSummary[]>(await supabase.rpc("fn_period_summary", {
       p_account: params.account,
@@ -56,6 +56,7 @@ export const api = {
       p_product_id: params.productId ?? null,
       p_creative_id: params.creativeId ?? null,
       p_bucket: params.bucket ?? "product",
+      p_campaign_type: params.campaignType ?? null,
     }));
     return rows[0];
   },
@@ -63,11 +64,23 @@ export const api = {
   async dailySeries(params: {
     account: string; from: string; to: string;
     groupId?: string | null; productId?: string | null; bucket?: Bucket;
+    campaignType?: string | null;
   }): Promise<DailyPoint[]> {
     return unwrap(await supabase.rpc("fn_daily_series", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_group_id: params.groupId ?? null, p_product_id: params.productId ?? null,
       p_bucket: params.bucket ?? "product",
+      p_campaign_type: params.campaignType ?? null,
+    }));
+  },
+
+  async campaignTypes(params: { account: string; from: string; to: string }): Promise<Array<{
+    campaign_type: string; campaign_type_label: string;
+    impressions: number; clicks: number; cost: number;
+    conv_count: number; conv_revenue: number;
+  }>> {
+    return unwrap(await supabase.rpc("fn_campaign_type_summary", {
+      p_account: params.account, p_from: params.from, p_to: params.to,
     }));
   },
 

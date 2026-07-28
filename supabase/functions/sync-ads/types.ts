@@ -4,6 +4,8 @@
 export interface NormalizedRow {
   /** 소재 ID. API 응답에 없으면 '-' 로 채운다. */
   creativeId: string;
+  /** 캠페인 유형 코드 (02=쇼핑검색, 01=파워링크, 04=브랜드검색). 없으면 null */
+  campaignType?: string | null;
   /** 숫자형 상품 ID (쇼핑몰 상품ID). 없으면 null */
   mallProductId: string | null;
   /** 숫자형이 아닌 광고 유형 값 (파워링크, 브랜드 검색 등). 없으면 null */

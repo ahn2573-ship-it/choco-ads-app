@@ -211,82 +211,14 @@ export class NaverSearchAdAdapter implements AdAdapter {
     if (!adUrl) return [];
     const adRows = await this.downloadTsv(adUrl);
 
-    // 진단: 캠페인 종류 수 (파워링크/쇼핑/브랜드가 다 들어왔는지).
-    const campSet = new Set<string>();
-    for (const cols of adRows) {
-      const camp = cols.find((c) => /^cmp-/.test(c));
-      if (camp) campSet.add(camp);
-    }
-    console.log("[진단] AD 총행:", adRows.length, "| 캠페인수:", campSet.size);
-
-    // 진단: 클릭 또는 비용이 0이 아닌 행을 몇 개 보여준다 (지표 컬럼 위치 확정용).
-    let shown = 0;
-    for (const cols of adRows) {
-      if (shown >= 6) break;
-      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-      if (devIdx === -1) continue;
-      const after = cols.slice(devIdx + 1).map((c) => Number(c.replace(/,/g, "")) || 0);
-      // device 뒤 숫자 중 큰 값(비용 후보, 100 이상)이 있는 행만.
-      if (after.some((v) => v >= 100)) {
-        console.log(`[진단] 값있는행 dev@${devIdx}:`, JSON.stringify(cols.slice(devIdx)));
-        shown++;
-      }
-    }
-
-    // 진단: device 뒤 각 위치별 총합을 따로 내본다. 어느 위치가 노출/비용인지 총합으로 판별.
-    const colSums: number[] = [0, 0, 0, 0, 0, 0];
-    for (const cols of adRows) {
-      if (!cols.some((c) => /^nad-/.test(c))) continue;
-      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-      if (devIdx === -1) continue;
-      for (let k = 0; k < 6; k++) {
-        colSums[k] += Number((cols[devIdx + 1 + k] ?? "0").replace(/,/g, "")) || 0;
-      }
-    }
-    console.log("[진단] device뒤 위치별 총합 [+1..+6]:", JSON.stringify(colSums));
-    console.log("[진단] 실제기대: 노출≈47859 클릭≈501 비용≈618953");
-
-    // 진단: device 앞 컬럼([7] 노출영역 코드 등) 값별로 노출/비용 총합을 나눠본다.
-    // 어떤 영역이 중복/초과를 만드는지 확인.
-    const byArea = new Map<string, { imp: number; cost: number; rows: number }>();
-    for (const cols of adRows) {
-      if (!cols.some((c) => /^nad-/.test(c))) continue;
-      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-      if (devIdx === -1) continue;
-      // device 바로 앞 칸이 노출영역 코드.
-      const area = cols[devIdx - 1] ?? "?";
-      // 자릿수로 그룹핑 (개별 코드는 너무 많으므로).
-      const areaKey = `${area.length}자리`;
-      const cur = byArea.get(areaKey) ?? { imp: 0, cost: 0, rows: 0 };
-      cur.imp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
-      cur.cost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
-      cur.rows += 1;
-      byArea.set(areaKey, cur);
-    }
-    console.log("[진단] 영역코드 자릿수별:", JSON.stringify([...byArea.entries()]));
-
-    // 진단: 캠페인 유형별(cmp-a001-XX 의 XX) 노출/비용.
-    const byCampType = new Map<string, { imp: number; cost: number }>();
-    for (const cols of adRows) {
-      const camp = cols.find((c) => /^cmp-/.test(c));
-      if (!camp) continue;
-      const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-      if (devIdx === -1) continue;
-      const m = camp.match(/^cmp-a001-(\d+)-/);
-      const type = m ? m[1] : "??";
-      const cur = byCampType.get(type) ?? { imp: 0, cost: 0 };
-      cur.imp += Number((cols[devIdx + 1] ?? "0").replace(/,/g, "")) || 0;
-      cur.cost += Number((cols[devIdx + 3] ?? "0").replace(/,/g, "")) || 0;
-      byCampType.set(type, cur);
-    }
-    console.log("[진단] 캠페인유형별(노출/비용):", JSON.stringify([...byCampType.entries()]));
-
-    // 소재 단위로 노출·클릭·비용·순위를 합산.
-    // 확인된 컬럼: [0]date [1]customerId [2]campaignId [3]adgroupId
-    //             [4]keyword(-) [5]adId [6]bizChannelId [7]?? [8]device
-    //             [9]노출 [10]클릭 [11]비용 [12]?? [13]??  ← device 다음이 지표
-    // device(M/P) 컬럼 위치를 찾아, 그 다음 3칸을 노출/클릭/비용으로 잡는다.
+    // 소재+캠페인유형 단위로 노출·클릭·비용·순위를 합산.
+    // 확인된 컬럼 구조:
+    //   [0]날짜 [1]광고주 [2]캠페인 [3]광고그룹 [4]키워드 [5]소재 [6]비즈채널
+    //   [7]노출영역코드 [8]디바이스(M/P) [+1]노출 [+2]클릭 [+3]비용 ...
+    // 캠페인유형: cmp-a001-XX 의 XX (02=쇼핑검색, 01=파워링크, 04=브랜드검색)
+    // 소재는 키워드/노출영역별로 여러 행에 쪼개져 있으므로 소재+유형 기준으로 합산한다.
     const perf = new Map<string, {
+      adId: string; campaignType: string;
       impressions: number; clicks: number; cost: number;
       rankSum: number; rankImp: number;
     }>();
@@ -298,32 +230,29 @@ export class NaverSearchAdAdapter implements AdAdapter {
       if (rowDate && rowDate !== dateCompact) continue;
 
       const adId = cols[adIdIdx];
+      const camp = cols.find((c) => /^cmp-/.test(c)) ?? "";
+      const campaignType = camp.match(/^cmp-a001-(\d+)-/)?.[1] ?? "00";
+
       const devIdx = cols.findIndex((c) => c === "M" || c === "P");
-      // 지표 시작 = device 다음 칸. device 를 못 찾으면 adId+3(bizChannel,code,device) 뒤로 추정.
       const base = devIdx !== -1 ? devIdx + 1 : adIdIdx + 4;
       const n = (k: number) => {
         const raw = cols[base + k];
         const v = raw ? Number(raw.replace(/,/g, "")) : 0;
         return Number.isFinite(v) ? v : 0;
       };
-      // AD 보고서 지표 순서: impCnt, clkCnt, salesAmt(비용), avgRnk
       const impressions = n(0);
       const clicks = n(1);
       const cost = n(2);
       const avgRnk = n(3);
 
-      const cur = perf.get(adId) ?? { impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0 };
+      const key = `${adId}|${campaignType}`;
+      const cur = perf.get(key) ??
+        { adId, campaignType, impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0 };
       cur.impressions += impressions;
       cur.clicks += clicks;
       cur.cost += cost;
       if (avgRnk > 0 && impressions > 0) { cur.rankSum += avgRnk * impressions; cur.rankImp += impressions; }
-      perf.set(adId, cur);
-    }
-
-    // 진단: 노출이 가장 많은 소재 3건의 파싱 결과를 보여준다 (컬럼 매핑 검증용).
-    const top = [...perf.entries()].sort((a, b) => b[1].impressions - a[1].impressions).slice(0, 3);
-    for (const [id, v] of top) {
-      console.log(`[진단] AD파싱 ${id.slice(-8)}: 노출=${v.impressions} 클릭=${v.clicks} 비용=${v.cost}`);
+      perf.set(key, cur);
     }
 
     // -----------------------------------------------------------------------
@@ -335,11 +264,6 @@ export class NaverSearchAdAdapter implements AdAdapter {
       const convUrl = await this.buildReport("AD_CONVERSION", statDate, 45);
       if (convUrl) {
         const convRows = await this.downloadTsv(convUrl);
-        console.log("[진단] 전환 총행:", convRows.length);
-        const cvSample = convRows.find((c) => c.some((v) => /^nad-/.test(v)));
-        if (cvSample) {
-          console.log("[진단] 전환 컬럼:", JSON.stringify(cvSample.map((v, i) => `[${i}]${v}`)));
-        }
 
         for (const cols of convRows) {
           const adId = cols.find((c) => /^nad-/.test(c));
@@ -371,7 +295,7 @@ export class NaverSearchAdAdapter implements AdAdapter {
         }
       }
     } catch (e) {
-      console.log("[진단] 전환보고서 건너뜀:", e instanceof Error ? e.message : String(e));
+      console.log("[수집] 전환보고서 건너뜀:", e instanceof Error ? e.message : String(e));
     }
 
     // -----------------------------------------------------------------------
@@ -392,15 +316,28 @@ export class NaverSearchAdAdapter implements AdAdapter {
     } catch (_) { /* 매핑은 나중에 보완 가능 */ }
 
     // -----------------------------------------------------------------------
-    // 4) 소재ID 기준으로 성과 + 전환 + 상품 조인
+    // 4) 소재+캠페인유형 기준으로 성과 + 전환 + 상품 조인
+    //    전환은 소재ID 단위이므로, 소재의 대표(노출 최다) 유형 행에만 붙인다.
     // -----------------------------------------------------------------------
+    // 소재별 노출 최다 유형을 찾는다 (전환을 한 번만 붙이기 위해).
+    const topTypeByAd = new Map<string, { type: string; imp: number }>();
+    for (const p of perf.values()) {
+      const t = topTypeByAd.get(p.adId);
+      if (!t || p.impressions > t.imp) topTypeByAd.set(p.adId, { type: p.campaignType, imp: p.impressions });
+    }
+
     const out: NormalizedRow[] = [];
-    for (const [adId, p] of perf) {
-      const c = conv.get(adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
+    for (const p of perf.values()) {
+      const isTopType = topTypeByAd.get(p.adId)?.type === p.campaignType;
+      // 전환은 소재 대표 유형 행에만 1회 반영 (중복 방지).
+      const c = isTopType
+        ? (conv.get(p.adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 })
+        : { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
       const avgRnk = p.rankImp > 0 ? p.rankSum / p.rankImp : 0;
       out.push(mapRow({
-        adId,
-        productId: adToProduct.get(adId),
+        adId: p.adId,
+        productId: adToProduct.get(p.adId),
+        campaignType: p.campaignType,
         impCnt: p.impressions,
         clkCnt: p.clicks,
         salesAmt: p.cost,
@@ -412,7 +349,7 @@ export class NaverSearchAdAdapter implements AdAdapter {
         statDt: statDate,
       }, statDate));
     }
-    console.log(`[진단] 조인 결과: 소재 ${out.length}건 (성과 ${perf.size}, 전환 ${conv.size}, 상품매핑 ${adToProduct.size})`);
+    console.log(`[수집] 소재·유형 조합 ${out.length}건 (전환 ${conv.size}, 상품매핑 ${adToProduct.size})`);
     return out;
   }
 

@@ -192,6 +192,7 @@ Deno.serve(async (req) => {
       ad_account_id: accountId,
       stat_date: r.statDate,
       creative_id: r.creativeId,
+      campaign_type: r.campaignType ?? null,
       product_id: productId,
       mall_product_id: mallProductId,
       ad_type_label: adTypeLabel,

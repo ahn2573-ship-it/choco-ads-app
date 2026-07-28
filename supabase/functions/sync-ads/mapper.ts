@@ -48,6 +48,7 @@ export function mapRow(
 
   return {
     creativeId: String(pick(row, FIELD_ALIASES.creativeId) ?? "-").trim() || "-",
+    campaignType: row.campaignType !== undefined ? String(row.campaignType) : null,
     mallProductId: numeric ? String(productRef).trim() : null,
     adTypeLabel: !numeric && productRef !== undefined && String(productRef).trim() !== "0"
       ? String(productRef).trim()

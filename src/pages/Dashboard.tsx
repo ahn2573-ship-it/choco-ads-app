@@ -21,12 +21,24 @@ export function Dashboard() {
   const navigate = useNavigate();
   const [groupId, setGroupId] = useState<string>("");
   const [bucket, setBucket] = useState<Bucket>("product");
+  const [campaignType, setCampaignType] = useState<string>("");
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   const prevRange = comparisonRange(range, compare);
   const enabled = Boolean(accountId);
-  const base = { account: accountId!, from: range.from, to: range.to, groupId: groupId || null, bucket };
+  const base = {
+    account: accountId!, from: range.from, to: range.to,
+    groupId: groupId || null, bucket,
+    campaignType: campaignType || null,
+  };
+
+  // 캠페인 유형 목록 (드롭다운 선택지)
+  const campaignTypes = useQuery({
+    queryKey: ["campaign-types", accountId, range],
+    queryFn: () => api.campaignTypes({ account: accountId!, from: range.from, to: range.to }),
+    enabled,
+  });
 
   const summary = useQuery({
     queryKey: ["summary", base],
@@ -135,6 +147,17 @@ export function Dashboard() {
         description="광고 API 로 수집된 일별 데이터를 기간별로 집계합니다"
         actions={
           <>
+            <Select value={campaignType} onChange={(e) => setCampaignType(e.target.value)}
+              className="h-9 text-xs" aria-label="캠페인 유형">
+              <option value="">전체 광고</option>
+              {(campaignTypes.data ?? [])
+                .filter((t) => t.campaign_type !== "00")
+                .map((t) => (
+                  <option key={t.campaign_type} value={t.campaign_type}>
+                    {t.campaign_type_label}
+                  </option>
+                ))}
+            </Select>
             <Select value={bucket} onChange={(e) => setBucket(e.target.value as Bucket)}
               className="h-9 text-xs" aria-label="광고 유형">
               <option value="product">일반 상품</option>
