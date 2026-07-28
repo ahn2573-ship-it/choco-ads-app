@@ -8,6 +8,7 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Products } from "@/pages/Products";
 import { ProductDetail } from "@/pages/ProductDetail";
 import { Groups } from "@/pages/Groups";
+import { GroupManage } from "@/pages/GroupManage";
 import { GroupDetail } from "@/pages/GroupDetail";
 import { RawData } from "@/pages/RawData";
 import { Mappings } from "@/pages/Mappings";
@@ -59,6 +60,7 @@ function Shell() {
           <Route path="products" element={<Products />} />
           <Route path="products/:id" element={<ProductDetail />} />
           <Route path="groups" element={<Groups />} />
+          <Route path="groups/manage" element={<AdminOnly><GroupManage /></AdminOnly>} />
           <Route path="groups/:id" element={<GroupDetail />} />
           <Route path="raw" element={<RawData />} />
           <Route path="unmapped" element={<Unmapped />} />
