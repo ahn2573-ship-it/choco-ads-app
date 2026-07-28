@@ -220,13 +220,14 @@ export const api = {
     id?: string; ad_account_id: string; creative_id: string;
     product_id: string; is_active?: boolean; note?: string | null;
   }) {
-    const row = unwrap(await supabase.from("creative_product_mappings")
-      .upsert(m, { onConflict: "ad_account_id,creative_id" }).select().single());
-    // 과거 RAW 데이터에도 소급 적용
-    await supabase.rpc("fn_backfill_mapping", {
-      p_account: m.ad_account_id, p_creative_id: m.creative_id,
-    });
-    return row;
+    // upsert 하면 트리거(backfill_after_mapping)가 과거 데이터에 자동 소급 적용한다.
+    // 따라서 여기서 fn_backfill_mapping 을 다시 호출하지 않는다 (중복/지연 방지).
+    const { data, error } = await supabase.from("creative_product_mappings")
+      .upsert(m, { onConflict: "ad_account_id,creative_id" })
+      .select()
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return data;
   },
 
   async deleteMapping(id: string) {
