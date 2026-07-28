@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Upload, Plus, Pencil, Trash2, Check, X } from "lucide-react";
+import { Upload, Plus, Pencil, Trash2, Check, X, ChevronRight, ChevronDown } from "lucide-react";
 import { api } from "@/lib/supabase";
 import { parseGroupBulkFile } from "@/lib/excel";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -144,7 +144,7 @@ export function GroupManage() {
             <Plus className="h-3.5 w-3.5" /> 추가
           </Button>
         </div>
-        <div className="max-h-[28rem] overflow-auto">
+        <div className="max-h-[32rem] overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-surface-2 text-xs text-ink-faint">
               <tr>
@@ -155,48 +155,166 @@ export function GroupManage() {
             </thead>
             <tbody>
               {(groups.data ?? []).map((g) => (
-                <tr key={g.id} className="border-t border-line">
-                  <td className="px-4 py-2">
-                    {editId === g.id ? (
-                      <Input className="h-7 w-64 text-xs" value={editName} autoFocus
-                        onChange={(e) => setEditName(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && saveRename(g.id)} />
-                    ) : (
-                      <span className="font-medium">{g.name}</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right tabular-nums">{g.product_count}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex items-center justify-end gap-1">
-                      {editId === g.id ? (
-                        <>
-                          <button className="rounded p-1 hover:bg-surface-2" onClick={() => saveRename(g.id)} title="저장">
-                            <Check className="h-4 w-4 text-good" />
-                          </button>
-                          <button className="rounded p-1 hover:bg-surface-2" onClick={() => setEditId(null)} title="취소">
-                            <X className="h-4 w-4" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="rounded p-1 hover:bg-surface-2"
-                            onClick={() => { setEditId(g.id); setEditName(g.name); }} title="이름 변경">
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          <button className="rounded p-1 hover:bg-surface-2"
-                            onClick={() => removeGroup(g.id, g.name)} title="삭제">
-                            <Trash2 className="h-4 w-4 text-bad" />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                <GroupRow
+                  key={g.id}
+                  group={g}
+                  isEditing={editId === g.id}
+                  editName={editName}
+                  onEditNameChange={setEditName}
+                  onStartEdit={() => { setEditId(g.id); setEditName(g.name); }}
+                  onSaveEdit={() => saveRename(g.id)}
+                  onCancelEdit={() => setEditId(null)}
+                  onDelete={() => removeGroup(g.id, g.name)}
+                  onChanged={refresh}
+                />
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+    </>
+  );
+}
+
+// 상품군 한 줄 — 클릭하면 소속 상품이 펼쳐지고, 거기서 추가/제거 가능
+function GroupRow({
+  group, isEditing, editName, onEditNameChange,
+  onStartEdit, onSaveEdit, onCancelEdit, onDelete, onChanged,
+}: {
+  group: { id: string; name: string; product_count: number };
+  isEditing: boolean; editName: string;
+  onEditNameChange: (v: string) => void;
+  onStartEdit: () => void; onSaveEdit: () => void; onCancelEdit: () => void;
+  onDelete: () => void; onChanged: () => void;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [addQuery, setAddQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const members = useQuery({
+    queryKey: ["group-products", group.id],
+    queryFn: () => api.productsInGroup(group.id),
+    enabled: open,
+  });
+  const candidates = useQuery({
+    queryKey: ["assign-search", addQuery],
+    queryFn: () => api.productsForAssign(addQuery),
+    enabled: open && addQuery.trim().length > 0,
+  });
+
+  const reload = () => {
+    qc.invalidateQueries({ queryKey: ["group-products", group.id] });
+    qc.invalidateQueries({ queryKey: ["group-list"] });
+    onChanged();
+  };
+
+  async function addProduct(pid: string) {
+    setBusy(true);
+    try { await api.setProductGroup(pid, group.id); setAddQuery(""); reload(); }
+    finally { setBusy(false); }
+  }
+  async function removeProduct(pid: string) {
+    setBusy(true);
+    try { await api.setProductGroup(pid, null); reload(); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <tr className="border-t border-line">
+        <td className="px-4 py-2">
+          {isEditing ? (
+            <Input className="h-7 w-64 text-xs" value={editName} autoFocus
+              onChange={(e) => onEditNameChange(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onSaveEdit()} />
+          ) : (
+            <button className="flex items-center gap-1.5 font-medium hover:text-brand-600"
+              onClick={() => setOpen((v) => !v)}>
+              {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+              {group.name}
+            </button>
+          )}
+        </td>
+        <td className="px-4 py-2 text-right tabular-nums">{group.product_count}</td>
+        <td className="px-4 py-2">
+          <div className="flex items-center justify-end gap-1">
+            {isEditing ? (
+              <>
+                <button className="rounded p-1 hover:bg-surface-2" onClick={onSaveEdit} title="저장">
+                  <Check className="h-4 w-4 text-good" />
+                </button>
+                <button className="rounded p-1 hover:bg-surface-2" onClick={onCancelEdit} title="취소">
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="rounded p-1 hover:bg-surface-2" onClick={onStartEdit} title="이름 변경">
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button className="rounded p-1 hover:bg-surface-2" onClick={onDelete} title="삭제">
+                  <Trash2 className="h-4 w-4 text-bad" />
+                </button>
+              </>
+            )}
+          </div>
+        </td>
+      </tr>
+      {open && (
+        <tr className="border-t border-line bg-surface-2/40">
+          <td colSpan={3} className="px-4 py-3">
+            {/* 상품 추가 검색 */}
+            <div className="mb-3">
+              <div className="mb-1 text-xs font-medium text-ink-muted">이 상품군에 상품 추가</div>
+              <Input className="h-8 w-full max-w-md text-xs"
+                placeholder="상품명 또는 상품ID 검색"
+                value={addQuery} onChange={(e) => setAddQuery(e.target.value)} />
+              {addQuery.trim() && (
+                <div className="mt-1 max-h-44 overflow-auto rounded-md border border-line bg-surface">
+                  {(candidates.data ?? []).length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-ink-faint">검색 결과 없음</div>
+                  ) : (
+                    (candidates.data ?? []).map((p) => (
+                      <button key={p.id} disabled={busy || p.product_group_id === group.id}
+                        onClick={() => addProduct(p.id)}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-surface-2 disabled:opacity-40">
+                        <span className="truncate">
+                          {p.display_name ?? p.base_name ?? p.mall_product_id}
+                          <span className="ml-1 text-ink-faint">({p.mall_product_id})</span>
+                        </span>
+                        {p.product_group_id === group.id
+                          ? <span className="shrink-0 text-good">이미 포함</span>
+                          : <Plus className="h-3.5 w-3.5 shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            {/* 소속 상품 목록 */}
+            <div className="text-xs font-medium text-ink-muted">포함 상품 {members.data?.length ?? 0}개</div>
+            {members.isLoading ? (
+              <div className="py-2 text-xs text-ink-faint">불러오는 중…</div>
+            ) : (members.data ?? []).length === 0 ? (
+              <div className="py-2 text-xs text-ink-faint">아직 상품이 없습니다. 위에서 검색해 추가하세요.</div>
+            ) : (
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(members.data ?? []).map((p) => (
+                  <span key={p.id}
+                    className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-1 text-xs">
+                    <span className="max-w-[16rem] truncate">{p.display_name ?? p.base_name ?? p.mall_product_id}</span>
+                    <button disabled={busy} onClick={() => removeProduct(p.id)}
+                      className="rounded-full p-0.5 hover:bg-bad/10" title="이 상품군에서 제거">
+                      <X className="h-3 w-3 text-bad" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </td>
+        </tr>
+      )}
     </>
   );
 }
