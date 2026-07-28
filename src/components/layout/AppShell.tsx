@@ -25,6 +25,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { to: "/", label: "대시보드", icon: LayoutDashboard },
       { to: "/products", label: "상품별 데이터", icon: Package },
       { to: "/groups", label: "상품군별 데이터", icon: Boxes },
+      { to: "/groups/manage", label: "상품군 관리", icon: Boxes, adminOnly: true },
     ],
   },
   {
