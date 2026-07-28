@@ -304,6 +304,7 @@ function GroupRow({
                   <span key={p.id}
                     className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-1 text-xs">
                     <span className="max-w-[16rem] truncate">{p.display_name ?? p.base_name ?? p.mall_product_id}</span>
+                    <span className="shrink-0 text-ink-faint">({p.mall_product_id})</span>
                     <button disabled={busy} onClick={() => removeProduct(p.id)}
                       className="rounded-full p-0.5 hover:bg-bad/10" title="이 상품군에서 제거">
                       <X className="h-3 w-3 text-bad" />
