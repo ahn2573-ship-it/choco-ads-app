@@ -16,6 +16,7 @@ interface NavItem {
   label: string;
   icon: typeof LayoutDashboard;
   adminOnly?: boolean;
+  end?: boolean;
 }
 
 const NAV: { section: string; items: NavItem[] }[] = [
@@ -24,7 +25,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { to: "/", label: "대시보드", icon: LayoutDashboard },
       { to: "/products", label: "상품별 데이터", icon: Package },
-      { to: "/groups", label: "상품군별 데이터", icon: Boxes },
+      { to: "/groups", label: "상품군별 데이터", icon: Boxes, end: true },
       { to: "/groups/manage", label: "상품군 관리", icon: Boxes, adminOnly: true },
     ],
   },
@@ -89,7 +90,7 @@ export function AppShell() {
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === "/"}
+                    end={item.end ?? item.to === "/"}
                     onClick={() => setOpen(false)}
                     className={({ isActive }) => cn(
                       "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors",
