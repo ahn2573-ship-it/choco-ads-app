@@ -221,6 +221,7 @@ export class NaverSearchAdAdapter implements AdAdapter {
       adId: string; campaignType: string;
       impressions: number; clicks: number; cost: number;
       rankSum: number; rankImp: number;
+      sample?: { devIdx: number; base: number; cols: string[] };  // [진단용]
     }>();
 
     for (const cols of adRows) {
@@ -247,7 +248,8 @@ export class NaverSearchAdAdapter implements AdAdapter {
 
       const key = `${adId}|${campaignType}`;
       const cur = perf.get(key) ??
-        { adId, campaignType, impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0 };
+        { adId, campaignType, impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0,
+          sample: { devIdx, base, cols } };  // [진단용] 그룹 첫 원본 행 컬럼 보존
       cur.impressions += impressions;
       cur.clicks += clicks;
       cur.cost += cost;
@@ -347,6 +349,7 @@ export class NaverSearchAdAdapter implements AdAdapter {
         totalConvCnt: c.totalCount,
         totalConvAmt: c.totalRevenue,
         statDt: statDate,
+        _debug: p.sample,  // [진단용] 원본 TSV 컬럼 배열 (raw에 저장됨)
       }, statDate));
     }
     console.log(`[수집] 소재·유형 조합 ${out.length}건 (전환 ${conv.size}, 상품매핑 ${adToProduct.size})`);
@@ -395,4 +398,3 @@ export function createAdapter(env: Record<string, string | undefined>): AdAdapte
 }
 
 export { seoulDate };
-
