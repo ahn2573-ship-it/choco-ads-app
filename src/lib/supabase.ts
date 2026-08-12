@@ -242,6 +242,25 @@ export const api = {
     return { rows: (data ?? []) as CreativeMapping[], total: count ?? 0 };
   },
 
+  // 매핑 추가 시 소재를 검색한다. 파워링크(other_ad) 를 포함한 전체 소재가 대상.
+  async searchCreatives(params: {
+    account: string; search?: string; limit?: number;
+  }): Promise<Array<{
+    creative_id: string;
+    ad_type_label: string | null;
+    bucket: "product" | "other_ad" | "unmapped";
+    is_mapped: boolean;
+    impressions: number;
+    cost: number;
+    last_date: string;
+  }>> {
+    return unwrap(await supabase.rpc("fn_search_creatives", {
+      p_account: params.account,
+      p_search: params.search || null,
+      p_limit: params.limit ?? 30,
+    }));
+  },
+
   async saveMapping(m: {
     id?: string; ad_account_id: string; creative_id: string;
     product_id: string; is_active?: boolean; note?: string | null;
