@@ -181,13 +181,25 @@ Deno.serve(async (req) => {
   }
 
   // ---- 5. upsert ------------------------------------------------------------
+  // 캠페인유형 기반 광고유형 라벨 폴백.
+  //   01=파워링크, 04=브랜드검색 은 상품 매핑 대상이 아니므로 라벨을 붙여 other_ad 로 분류한다.
+  //   02=쇼핑검색 은 상품에 매핑돼야 하므로 라벨을 붙이지 않고 unmapped 로 남긴다.
+  const CAMPAIGN_TYPE_LABEL: Record<string, string> = {
+    "01": "파워링크",
+    "04": "브랜드검색",
+  };
   const payload = deduped.map((r) => {
     const viaCreative = byCreative.get(r.creativeId);
     const mallProductId = r.mallProductId ?? viaCreative?.mallProductId ?? null;
     const productId = viaCreative?.productId ??
       (r.mallProductId ? byMallId.get(r.mallProductId) ?? null : null);
     // 상품 매핑이 없으면, 소재에 등록된 광고유형(파워링크 등)을 라벨로 채운다.
-    const adTypeLabel = productId ? null : (r.adTypeLabel ?? creativeAdType.get(r.creativeId) ?? null);
+    // 그래도 라벨이 없으면 캠페인유형(01/04)으로 자동 판정한다.
+    const adTypeLabel = productId
+      ? null
+      : (r.adTypeLabel
+        ?? creativeAdType.get(r.creativeId)
+        ?? (r.campaignType ? CAMPAIGN_TYPE_LABEL[r.campaignType] ?? null : null));
     return {
       ad_account_id: accountId,
       stat_date: r.statDate,
