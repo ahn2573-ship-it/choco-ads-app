@@ -214,14 +214,18 @@ export class NaverSearchAdAdapter implements AdAdapter {
     // 소재+캠페인유형 단위로 노출·클릭·비용·순위를 합산.
     // 확인된 컬럼 구조:
     //   [0]날짜 [1]광고주 [2]캠페인 [3]광고그룹 [4]키워드 [5]소재 [6]비즈채널
-    //   [7]노출영역코드 [8]디바이스(M/P) [+1]노출 [+2]클릭 [+3]비용 ...
+    //   [7]노출영역코드 [8]디바이스(M/P) [+1]노출 [+2]클릭 [+3]비용 [+4]노출순위합계 ...
     // 캠페인유형: cmp-a001-XX 의 XX (02=쇼핑검색, 01=파워링크, 04=브랜드검색)
     // 소재는 키워드/노출영역별로 여러 행에 쪼개져 있으므로 소재+유형 기준으로 합산한다.
+    //
+    // ★ 평균노출순위 주의: 대용량 보고서(StatReport)의 순위 필드는 "평균"이 아니라
+    //   "노출순위 합계(Sum of AD rank)" 다. (예전 /stats 는 avgRnk=평균을 줬음)
+    //   따라서 소재별 평균순위 = Σ(노출순위합계) / Σ(노출수) 로 계산해야 한다.
+    //   과거엔 이 값을 평균으로 오인해 노출수를 한 번 더 곱하는 바람에 순위가 폭발했다.
     const perf = new Map<string, {
       adId: string; campaignType: string;
       impressions: number; clicks: number; cost: number;
       rankSum: number; rankImp: number;
-      sample?: { devIdx: number; base: number; cols: string[] };  // [진단용]
     }>();
 
     for (const cols of adRows) {
@@ -244,16 +248,17 @@ export class NaverSearchAdAdapter implements AdAdapter {
       const impressions = n(0);
       const clicks = n(1);
       const cost = n(2);
-      const avgRnk = n(3);
+      const adRankSum = n(3);   // "노출순위 합계(Sum of AD rank)" — 평균 아님
 
       const key = `${adId}|${campaignType}`;
       const cur = perf.get(key) ??
-        { adId, campaignType, impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0,
-          sample: { devIdx, base, cols } };  // [진단용] 그룹 첫 원본 행 컬럼 보존
+        { adId, campaignType, impressions: 0, clicks: 0, cost: 0, rankSum: 0, rankImp: 0 };
       cur.impressions += impressions;
       cur.clicks += clicks;
       cur.cost += cost;
-      if (avgRnk > 0 && impressions > 0) { cur.rankSum += avgRnk * impressions; cur.rankImp += impressions; }
+      // 순위합계는 이미 "노출수만큼 더해진 값"이므로 그대로 누적하고, 분모는 노출수를 누적한다.
+      // 최종 평균 = Σ(순위합계) / Σ(노출수). (기존처럼 노출수를 또 곱하면 안 됨)
+      if (impressions > 0 && adRankSum > 0) { cur.rankSum += adRankSum; cur.rankImp += impressions; }
       perf.set(key, cur);
     }
 
@@ -335,6 +340,7 @@ export class NaverSearchAdAdapter implements AdAdapter {
       const c = isTopType
         ? (conv.get(p.adId) ?? { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 })
         : { convCount: 0, convRevenue: 0, totalCount: 0, totalRevenue: 0 };
+      // 평균노출순위 = Σ(노출순위합계) / Σ(노출수). rankSum 은 순위합계의 누적이다.
       const avgRnk = p.rankImp > 0 ? p.rankSum / p.rankImp : 0;
       out.push(mapRow({
         adId: p.adId,
@@ -349,7 +355,6 @@ export class NaverSearchAdAdapter implements AdAdapter {
         totalConvCnt: c.totalCount,
         totalConvAmt: c.totalRevenue,
         statDt: statDate,
-        _debug: p.sample,  // [진단용] 원본 TSV 컬럼 배열 (raw에 저장됨)
       }, statDate));
     }
     console.log(`[수집] 소재·유형 조합 ${out.length}건 (전환 ${conv.size}, 상품매핑 ${adToProduct.size})`);
