@@ -395,3 +395,4 @@ export function createAdapter(env: Record<string, string | undefined>): AdAdapte
 }
 
 export { seoulDate };
+
