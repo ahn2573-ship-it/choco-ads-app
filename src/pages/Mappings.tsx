@@ -22,6 +22,7 @@ export function Mappings() {
   const [groupId, setGroupId] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [creativeId, setCreativeId] = useState("");
+  const [creativeQuery, setCreativeQuery] = useState("");
   const [productQuery, setProductQuery] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [saving, setSaving] = useState(false);
@@ -36,11 +37,26 @@ export function Mappings() {
     enabled: Boolean(accountId),
   });
 
+  // 매핑 추가 모달에서 소재를 검색한다. 파워링크(other_ad) 포함 전체 소재가 대상.
+  const creativeSearch = useQuery({
+    queryKey: ["creative-search", accountId, creativeQuery],
+    queryFn: () => api.searchCreatives({ account: accountId!, search: creativeQuery }),
+    enabled: editorOpen && Boolean(accountId),
+  });
+
   const productSearch = useQuery({
     queryKey: ["product-search", productQuery],
     queryFn: () => api.searchProducts(productQuery),
     enabled: editorOpen,
   });
+
+  function closeEditor() {
+    setEditorOpen(false);
+    setCreativeId("");
+    setCreativeQuery("");
+    setSelectedProduct(null);
+    setProductQuery("");
+  }
 
   async function saveMapping() {
     if (!accountId || !creativeId.trim() || !selectedProduct) return;
@@ -53,9 +69,7 @@ export function Mappings() {
         product_id: selectedProduct.id,
         is_active: true,
       });
-      setEditorOpen(false);
-      setCreativeId("");
-      setSelectedProduct(null);
+      closeEditor();
       setMessage("매핑을 저장하고 기존 데이터에도 적용했습니다.");
       qc.invalidateQueries({ queryKey: ["mappings"] });
       qc.invalidateQueries({ queryKey: ["unmapped"] });
@@ -255,11 +269,11 @@ export function Mappings() {
 
       <Modal
         open={editorOpen}
-        onClose={() => setEditorOpen(false)}
+        onClose={closeEditor}
         title="매핑 추가"
         footer={
           <>
-            <Button onClick={() => setEditorOpen(false)}>취소</Button>
+            <Button onClick={closeEditor}>취소</Button>
             <Button variant="primary" loading={saving} onClick={saveMapping}
               disabled={!creativeId.trim() || !selectedProduct}>
               저장
@@ -269,9 +283,41 @@ export function Mappings() {
       >
         <div className="space-y-3">
           <div>
+            <label className="mb-1 block text-xs font-medium text-ink-muted">
+              소재 검색 <span className="text-ink-faint">(파워링크 포함 · ID 일부 또는 "파워링크" 로 검색)</span>
+            </label>
+            <Input value={creativeQuery} onChange={(e) => setCreativeQuery(e.target.value)}
+              placeholder="예: a001-01- 또는 파워링크" />
+            <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-line">
+              {creativeSearch.isLoading && (
+                <p className="px-3 py-4 text-center text-xs text-ink-faint">검색 중…</p>
+              )}
+              {(creativeSearch.data ?? []).map((c) => (
+                <button
+                  key={c.creative_id}
+                  onClick={() => setCreativeId(c.creative_id)}
+                  className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-surface-sunken ${
+                    creativeId === c.creative_id ? "bg-brand-50" : ""
+                  }`}
+                >
+                  <span className="truncate font-mono text-2xs">{c.creative_id}</span>
+                  <span className="flex shrink-0 items-center gap-1">
+                    {c.ad_type_label && <Badge tone="neutral">{c.ad_type_label}</Badge>}
+                    {c.is_mapped && <Badge tone="good">매핑됨</Badge>}
+                  </span>
+                </button>
+              ))}
+              {!creativeSearch.isLoading && creativeQuery && creativeSearch.data?.length === 0 && (
+                <p className="px-3 py-4 text-center text-xs text-ink-faint">
+                  일치하는 소재가 없습니다.
+                </p>
+              )}
+            </div>
+          </div>
+          <div>
             <label className="mb-1 block text-xs font-medium text-ink-muted">소재 ID</label>
             <Input value={creativeId} onChange={(e) => setCreativeId(e.target.value)}
-              placeholder="nad-a001-01-000000000000000" />
+              placeholder="위에서 검색해 선택하거나 직접 입력" />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-ink-muted">연결할 상품</label>
