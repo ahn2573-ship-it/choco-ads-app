@@ -16,11 +16,11 @@ import { Button, Card, CardHeader, EmptyState, ErrorState, Select, TableSkeleton
 import type { Bucket } from "@/lib/types";
 
 export function Dashboard() {
-  const { accountId, range, compare, groups } = useAppState();
+  const { accountId, range, compare, groups, media, setMedia } = useAppState();
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [groupId, setGroupId] = useState<string>("");
-const [bucket, setBucket] = useState<Bucket>("all");
+  const [bucket, setBucket] = useState<Bucket>("product");
   const [campaignType, setCampaignType] = useState<string>("");
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
@@ -31,12 +31,13 @@ const [bucket, setBucket] = useState<Bucket>("all");
     account: accountId!, from: range.from, to: range.to,
     groupId: groupId || null, bucket,
     campaignType: campaignType || null,
+    media,
   };
 
   // 캠페인 유형 목록 (드롭다운 선택지)
   const campaignTypes = useQuery({
-    queryKey: ["campaign-types", accountId, range],
-    queryFn: () => api.campaignTypes({ account: accountId!, from: range.from, to: range.to }),
+    queryKey: ["campaign-types", accountId, range, media],
+    queryFn: () => api.campaignTypes({ account: accountId!, from: range.from, to: range.to, media }),
     enabled,
   });
 
@@ -47,7 +48,7 @@ const [bucket, setBucket] = useState<Bucket>("all");
   });
 
   const prevSummary = useQuery({
-    queryKey: ["summary-prev", accountId, prevRange, groupId, bucket],
+    queryKey: ["summary-prev", accountId, prevRange, groupId, bucket, campaignType, media],
     queryFn: () => api.summary({ ...base, from: prevRange!.from, to: prevRange!.to }),
     enabled: enabled && Boolean(prevRange),
   });
@@ -59,8 +60,8 @@ const [bucket, setBucket] = useState<Bucket>("all");
   });
 
   const groupStats = useQuery({
-    queryKey: ["group-stats", accountId, range],
-    queryFn: () => api.groupStats({ account: accountId!, from: range.from, to: range.to }),
+    queryKey: ["group-stats", accountId, range, media],
+    queryFn: () => api.groupStats({ account: accountId!, from: range.from, to: range.to, media }),
     enabled,
   });
 
@@ -71,8 +72,8 @@ const [bucket, setBucket] = useState<Bucket>("all");
   });
 
   const zeroConv = useQuery({
-    queryKey: ["zero-conv", accountId, range],
-    queryFn: () => api.zeroConversion({ account: accountId!, from: range.from, to: range.to, minCost: 1 }),
+    queryKey: ["zero-conv", accountId, range, media],
+    queryFn: () => api.zeroConversion({ account: accountId!, from: range.from, to: range.to, minCost: 1, media }),
     enabled,
   });
 
@@ -124,7 +125,7 @@ const [bucket, setBucket] = useState<Bucket>("all");
     if (!accountId) return;
     const [raw, unmapped] = await Promise.all([
       api.rawRows({ account: accountId, from: range.from, to: range.to, pageSize: 5000 }),
-      api.unmapped({ account: accountId, from: range.from, to: range.to }),
+      api.unmapped({ account: accountId, from: range.from, to: range.to, media }),
     ]);
     exportFullReport({
       from: range.from,
@@ -147,6 +148,12 @@ const [bucket, setBucket] = useState<Bucket>("all");
         description="광고 API 로 수집된 일별 데이터를 기간별로 집계합니다"
         actions={
           <>
+            <Select value={media} onChange={(e) => setMedia(e.target.value as "all" | "naver" | "meta")}
+              className="h-9 text-xs" aria-label="광고 매체">
+              <option value="all">전체 매체</option>
+              <option value="naver">네이버</option>
+              <option value="meta">메타</option>
+            </Select>
             <Select value={campaignType} onChange={(e) => setCampaignType(e.target.value)}
               className="h-9 text-xs" aria-label="캠페인 유형">
               <option value="">전체 광고</option>
