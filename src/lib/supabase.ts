@@ -47,6 +47,7 @@ export const api = {
     account: string; from: string; to: string;
     groupId?: string | null; productId?: string | null;
     creativeId?: string | null; bucket?: Bucket; campaignType?: string | null;
+    media?: string | null;
   }): Promise<PeriodSummary> {
     const rows = unwrap<PeriodSummary[]>(await supabase.rpc("fn_period_summary", {
       p_account: params.account,
@@ -57,6 +58,7 @@ export const api = {
       p_creative_id: params.creativeId ?? null,
       p_bucket: params.bucket ?? "product",
       p_campaign_type: params.campaignType ?? null,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
     return rows[0];
   },
@@ -64,63 +66,76 @@ export const api = {
   async dailySeries(params: {
     account: string; from: string; to: string;
     groupId?: string | null; productId?: string | null; bucket?: Bucket;
-    campaignType?: string | null;
+    campaignType?: string | null; media?: string | null;
   }): Promise<DailyPoint[]> {
     return unwrap(await supabase.rpc("fn_daily_series", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_group_id: params.groupId ?? null, p_product_id: params.productId ?? null,
       p_bucket: params.bucket ?? "product",
       p_campaign_type: params.campaignType ?? null,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
-  async campaignTypes(params: { account: string; from: string; to: string }): Promise<Array<{
+  async campaignTypes(params: {
+    account: string; from: string; to: string; media?: string | null;
+  }): Promise<Array<{
     campaign_type: string; campaign_type_label: string;
     impressions: number; clicks: number; cost: number;
     conv_count: number; conv_revenue: number;
   }>> {
     return unwrap(await supabase.rpc("fn_campaign_type_summary", {
       p_account: params.account, p_from: params.from, p_to: params.to,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
   async productStats(params: {
     account: string; from: string; to: string;
     groupId?: string | null; search?: string | null; bucket?: Bucket;
+    media?: string | null;
   }): Promise<ProductStat[]> {
     return unwrap(await supabase.rpc("fn_product_stats", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_group_id: params.groupId ?? null, p_search: params.search || null,
       p_bucket: params.bucket ?? "product",
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
   async groupStats(params: {
     account: string; from: string; to: string; search?: string | null;
+    media?: string | null;
   }): Promise<GroupStat[]> {
     return unwrap(await supabase.rpc("fn_group_stats", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_search: params.search || null,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
   async creativeStats(params: {
     account: string; from: string; to: string; productId?: string | null;
+    media?: string | null;
   }): Promise<CreativeStat[]> {
     return unwrap(await supabase.rpc("fn_creative_stats", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_product_id: params.productId ?? null,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
-  async unmapped(params: { account: string; from: string; to: string }): Promise<UnmappedRow[]> {
+  async unmapped(params: {
+    account: string; from: string; to: string; media?: string | null;
+  }): Promise<UnmappedRow[]> {
     return unwrap(await supabase.rpc("fn_unmapped", {
       p_account: params.account, p_from: params.from, p_to: params.to,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
   async zeroConversion(params: {
-    account: string; from: string; to: string; minCost?: number;
+    account: string; from: string; to: string; minCost?: number; media?: string | null;
   }) {
     return unwrap<Array<{
       product_id: string; display_name: string; product_group_name: string;
@@ -128,6 +143,7 @@ export const api = {
     }>>(await supabase.rpc("fn_zero_conversion_products", {
       p_account: params.account, p_from: params.from, p_to: params.to,
       p_min_cost: params.minCost ?? 0,
+      p_media: params.media && params.media !== "all" ? params.media : null,
     }));
   },
 
@@ -240,25 +256,6 @@ export const api = {
     const { data, error, count } = await q;
     if (error) throw new Error(error.message);
     return { rows: (data ?? []) as CreativeMapping[], total: count ?? 0 };
-  },
-
-  // 매핑 추가 시 소재를 검색한다. 파워링크(other_ad) 를 포함한 전체 소재가 대상.
-  async searchCreatives(params: {
-    account: string; search?: string; limit?: number;
-  }): Promise<Array<{
-    creative_id: string;
-    ad_type_label: string | null;
-    bucket: "product" | "other_ad" | "unmapped";
-    is_mapped: boolean;
-    impressions: number;
-    cost: number;
-    last_date: string;
-  }>> {
-    return unwrap(await supabase.rpc("fn_search_creatives", {
-      p_account: params.account,
-      p_search: params.search || null,
-      p_limit: params.limit ?? 30,
-    }));
   },
 
   async saveMapping(m: {
