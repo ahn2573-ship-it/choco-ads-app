@@ -49,8 +49,14 @@ const NAV: { section: string; items: NavItem[] }[] = [
 
 export function AppShell() {
   const { profile, isAdmin, signOut } = useAuth();
-  const { accounts, accountId, setAccountId } = useAppState();
+  const { accounts, accountId, setAccountId, media, setMedia } = useAppState();
   const [open, setOpen] = useState(false);
+
+  const MEDIA_TABS: { value: "all" | "naver" | "meta"; label: string }[] = [
+    { value: "all", label: "전체" },
+    { value: "naver", label: "네이버" },
+    { value: "meta", label: "메타" },
+  ];
 
   const unread = useQuery({
     queryKey: ["alerts-unread", accountId],
@@ -153,6 +159,26 @@ export function AppShell() {
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </Select>
           )}
+
+          {/* 매체 탭 (전체 / 네이버 / 메타) — 전역 상태, 모든 화면에 적용 */}
+          <div className="flex items-center rounded-md border border-line bg-surface-sunken p-0.5" role="tablist" aria-label="광고 매체">
+            {MEDIA_TABS.map((t) => (
+              <button
+                key={t.value}
+                role="tab"
+                aria-selected={media === t.value}
+                onClick={() => setMedia(t.value)}
+                className={cn(
+                  "rounded px-3 py-1 text-xs font-medium transition-colors",
+                  media === t.value
+                    ? "bg-surface text-ink shadow-sm"
+                    : "text-ink-muted hover:text-ink",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
           <div className="ml-auto" id="topbar-slot" />
         </header>
