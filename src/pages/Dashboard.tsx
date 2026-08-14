@@ -20,7 +20,7 @@ export function Dashboard() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [groupId, setGroupId] = useState<string>("");
-  const [bucket, setBucket] = useState<Bucket>("product");
+  const [bucket, setBucket] = useState<Bucket>("all");
   const [campaignType, setCampaignType] = useState<string>("");
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
