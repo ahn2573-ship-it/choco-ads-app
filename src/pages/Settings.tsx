@@ -7,6 +7,7 @@ import { parseResult2File } from "@/lib/excel";
 import { parseGfaFile, classifyGfa, gfaLabelOf } from "@/lib/gfa";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge, Button, Card, CardHeader, ErrorState, Input, Select, TableSkeleton } from "@/components/ui";
+import { cn } from "@/lib/cn";
 
 const RULE_LABELS: Record<string, { label: string; unit: string; hint: string }> = {
   cost_no_conversion: { label: "광고비 소진, 구매완료 전환 0", unit: "원 이상", hint: "이 금액 이상 쓴 상품 중 구매완료가 없는 경우" },
@@ -33,6 +34,7 @@ export function Settings() {
   const gfaFileRef = useRef<HTMLInputElement>(null);
   const [gfaImporting, setGfaImporting] = useState(false);
   const [gfaMessage, setGfaMessage] = useState<string | null>(null);
+  const [gfaDragging, setGfaDragging] = useState(false);
   const [newKw, setNewKw] = useState("");
   const [newKwGroup, setNewKwGroup] = useState("");
 
@@ -148,96 +150,110 @@ export function Settings() {
   // -------------------------------------------------------------------------
   // 네이버 GFA RAW 가져오기 (소재이름 키워드 → 상품군 자동 분류)
   // -------------------------------------------------------------------------
-  async function importGfa(file: File) {
-    if (!accountId) return;
+  async function importGfaFiles(files: File[]) {
+    if (!accountId || !files.length) return;
     setGfaImporting(true);
     setGfaMessage(null);
     try {
-      const { rows, skipped, level } = await parseGfaFile(file);
-      if (!rows.length) {
+      // 규칙·상품군은 한 번만 로드
+      const { data: rulesData, error: rErr } = await supabase
+        .from("gfa_group_rules")
+        .select("keyword, group_id, priority, is_active")
+        .eq("is_active", true);
+      if (rErr) throw new Error(rErr.message);
+      const groups = groupOptions.data ?? [];
+      const groupName = new Map(groups.map((g) => [g.id, g.name]));
+
+      let totRows = 0, totMapped = 0, totUnmapped = 0, totSkipped = 0, emptyFiles = 0;
+      const unmappedNames = new Set<string>();
+      const dateSet = new Set<string>();
+      let campaignLevel = false;
+
+      for (const file of files) {
+        const { rows, skipped, level } = await parseGfaFile(file);
+        totSkipped += skipped;
+        if (!rows.length) { emptyFiles++; continue; }
+        if (level === "캠페인") campaignLevel = true;
+
+        // 소재 등록(이름 포함)
+        const creById = new Map<string, { name: string; last: string }>();
+        for (const r of rows) {
+          const prev = creById.get(r.creative_id);
+          if (!prev || r.stat_date > prev.last) {
+            creById.set(r.creative_id, { name: r.creative_name, last: r.stat_date });
+          }
+          dateSet.add(r.stat_date);
+        }
+        await supabase.from("creatives").upsert(
+          [...creById.entries()].map(([creative_id, v]) => ({
+            ad_account_id: accountId, creative_id, creative_name: v.name, last_seen_at: v.last,
+          })),
+          { onConflict: "ad_account_id,creative_id" },
+        );
+
+        const payload = rows.map((r) => {
+          const gid = classifyGfa(r.match_text, rulesData ?? [], groups);
+          if (gid) totMapped++; else { totUnmapped++; unmappedNames.add(gfaLabelOf(r.match_text)); }
+          return {
+            ad_account_id: accountId,
+            stat_date: r.stat_date,
+            creative_id: r.creative_id,
+            product_id: null,
+            mall_product_id: null,
+            ad_type_label: gid ? (groupName.get(gid) ?? null) : null,
+            product_group_id: gid,
+            campaign_type: null,
+            impressions: r.impressions,
+            clicks: r.clicks,
+            cost: r.cost,
+            avg_rank: null,
+            conv_count: r.conv_count,
+            conv_revenue: r.conv_revenue,
+            total_conv_count: r.total_conv_count,
+            total_conv_revenue: r.total_conv_revenue,
+            cart_count: r.cart_count,
+            cart_revenue: r.cart_revenue,
+            media: "naver_gfa",
+            source: "gfa_import",
+          };
+        });
+        totRows += payload.length;
+
+        for (let i = 0; i < payload.length; i += 500) {
+          const { error } = await supabase.from("ad_performance_daily")
+            .upsert(payload.slice(i, i + 500), {
+              onConflict: "ad_account_id,stat_date,creative_id,dedupe_key",
+            });
+          if (error) throw new Error(error.message);
+        }
+      }
+
+      if (!totRows) {
         setGfaMessage(
           "읽을 수 있는 행이 없습니다. 헤더(광고 소재 이름·ID 또는 광고 그룹 이름·ID, " +
           "그리고 기간·총비용·노출수·클릭수·구매완료 수·구매완료 전환매출액)를 확인하세요.",
         );
         return;
       }
-      // 캠페인 단위 파일은 소재/그룹 이름이 없어 스텝 구분이 불가 → 안내
-      const levelWarn = level === "캠페인"
-        ? " ⚠ 캠페인 단위 파일이라 스텝(상품군) 구분이 어렵습니다. 소재 또는 광고그룹 단위로 내보내세요."
-        : "";
 
-      // 최신 규칙 로드 (업로드 시점 기준으로 분류)
-      const { data: rulesData, error: rErr } = await supabase
-        .from("gfa_group_rules")
-        .select("keyword, group_id, priority, is_active")
-        .eq("is_active", true);
-      if (rErr) throw new Error(rErr.message);
-      const groupName = new Map((groupOptions.data ?? []).map((g) => [g.id, g.name]));
-
-      // 소재 등록(이름 포함) — 미매핑 화면·소재별 성과에서 이름이 보이도록
-      const creById = new Map<string, { name: string; last: string }>();
-      for (const r of rows) {
-        const prev = creById.get(r.creative_id);
-        if (!prev || r.stat_date > prev.last) {
-          creById.set(r.creative_id, { name: r.creative_name, last: r.stat_date });
-        }
-      }
-      await supabase.from("creatives").upsert(
-        [...creById.entries()].map(([creative_id, v]) => ({
-          ad_account_id: accountId, creative_id, creative_name: v.name, last_seen_at: v.last,
-        })),
-        { onConflict: "ad_account_id,creative_id" },
-      );
-
-      let mapped = 0, unmapped = 0;
-      const unmappedNames = new Set<string>();
-      const groups = groupOptions.data ?? [];
-      const payload = rows.map((r) => {
-        const gid = classifyGfa(r.match_text, rulesData ?? [], groups);
-        if (gid) mapped++; else { unmapped++; unmappedNames.add(gfaLabelOf(r.match_text)); }
-        return {
-          ad_account_id: accountId,
-          stat_date: r.stat_date,
-          creative_id: r.creative_id,
-          product_id: null,
-          mall_product_id: null,
-          ad_type_label: gid ? (groupName.get(gid) ?? null) : null,
-          product_group_id: gid,
-          campaign_type: null,
-          impressions: r.impressions,
-          clicks: r.clicks,
-          cost: r.cost,
-          avg_rank: null,
-          conv_count: r.conv_count,
-          conv_revenue: r.conv_revenue,
-          // 총 전환수/매출 컬럼이 있으면 실제값, 없으면 구매완료로 대체 (파서에서 처리)
-          total_conv_count: r.total_conv_count,
-          total_conv_revenue: r.total_conv_revenue,
-          cart_count: r.cart_count,
-          cart_revenue: r.cart_revenue,
-          media: "naver_gfa",
-          source: "gfa_import",
-        };
-      });
-
-      for (let i = 0; i < payload.length; i += 500) {
-        const { error } = await supabase.from("ad_performance_daily")
-          .upsert(payload.slice(i, i + 500), {
-            onConflict: "ad_account_id,stat_date,creative_id,dedupe_key",
-          });
-        if (error) throw new Error(error.message);
-      }
-
-      const unmappedHint = unmapped
-        ? ` 미매핑 상품명: ${[...unmappedNames].slice(0, 6).join(", ")}` +
+      const dates = [...dateSet].sort();
+      const dateStr = dates.length <= 1
+        ? (dates[0] ?? "")
+        : `${dates[0]}~${dates[dates.length - 1]} (${dates.length}일)`;
+      const unmappedHint = totUnmapped
+        ? ` · 미매핑 상품명: ${[...unmappedNames].slice(0, 6).join(", ")}` +
           ([...unmappedNames].length > 6 ? " 등" : "") +
-          ". 상품군을 만들거나 아래 규칙을 추가한 뒤 같은 파일을 다시 올리면 재분류됩니다."
+          " (상품군 생성 또는 규칙 추가 후 재업로드 시 자동 분류)"
+        : "";
+      const levelWarn = campaignLevel
+        ? " ⚠ 캠페인 단위 파일이 포함돼 일부는 스텝(상품군) 구분이 어렵습니다."
         : "";
       setGfaMessage(
-        `${level} 단위 파일 인식 — ${payload.length}건 반영 (상품군 매칭 ${mapped}건 · 미매핑 ${unmapped}건` +
-        (skipped ? ` · 건너뜀 ${skipped}건` : "") + ")" +
-        unmappedHint +
-        levelWarn,
+        `${files.length}개 파일 · ${dateStr} · ${totRows}건 반영 ` +
+        `(상품군 매칭 ${totMapped} · 미매핑 ${totUnmapped}` +
+        (totSkipped ? ` · 건너뜀 ${totSkipped}` : "") +
+        (emptyFiles ? ` · 빈 파일 ${emptyFiles}` : "") + ")" +
+        unmappedHint + levelWarn,
       );
       qc.invalidateQueries();
     } catch (e) {
@@ -395,22 +411,48 @@ export function Settings() {
               {gfaMessage}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-3 px-4 py-4">
+          <div className="px-4 py-4">
             <input
-              ref={gfaFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+              ref={gfaFileRef} type="file" accept=".csv,.xlsx,.xls" multiple className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) importGfa(f);
+                const fs = Array.from(e.target.files ?? []);
+                if (fs.length) importGfaFiles(fs);
                 e.target.value = "";
               }}
             />
-            <Button variant="primary" loading={gfaImporting} onClick={() => gfaFileRef.current?.click()}>
-              <Upload className="h-3.5 w-3.5" /> GFA 리포트 올리기
-            </Button>
-            <p className="text-xs text-ink-muted">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => !gfaImporting && gfaFileRef.current?.click()}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") gfaFileRef.current?.click(); }}
+              onDragOver={(e) => { e.preventDefault(); setGfaDragging(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setGfaDragging(false); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setGfaDragging(false);
+                if (gfaImporting) return;
+                const fs = Array.from(e.dataTransfer.files ?? [])
+                  .filter((f) => /\.(csv|xlsx|xls)$/i.test(f.name));
+                if (fs.length) importGfaFiles(fs);
+              }}
+              className={cn(
+                "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-8 text-center transition-colors",
+                gfaDragging ? "border-brand-500 bg-brand-50" : "border-line hover:border-brand-500 hover:bg-surface-sunken",
+                gfaImporting && "pointer-events-none opacity-60",
+              )}
+            >
+              <Upload className="h-6 w-6 text-ink-faint" />
+              <p className="text-sm font-medium">
+                {gfaImporting ? "가져오는 중…" : "여기로 파일을 끌어다 놓거나 클릭해서 선택"}
+              </p>
+              <p className="text-2xs text-ink-faint">
+                CSV · XLSX · 여러 개 한 번에 가능 (여러 날짜/파일을 함께 올려도 날짜별로 분류)
+              </p>
+            </div>
+            <p className="mt-3 text-xs text-ink-muted">
               파일명과 무관하게 <b>열(형식)만 보고</b> 필요한 값을 자동으로 뽑습니다(안 쓰는 열은 무시).
-              소재/그룹/캠페인 단위를 자동 인식하며, 소재이름·그룹이름 속 키워드로 상품군을 분류합니다.
-              예: <b>스텝4.0</b> → 논슬립 스텝 4.0, <b>리타겟</b> → 브랜드. 스텝 구분은 소재 또는 광고그룹 단위 파일에서 됩니다.
+              소재/그룹/캠페인 단위를 자동 인식하며, 소재이름 속 상품명으로 상품군을 자동 매칭합니다.
+              예: <b>논슬립 스텝 4.0</b> → 상품군 자동, <b>리타겟</b> → 브랜드.
             </p>
           </div>
         </Card>
