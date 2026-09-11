@@ -213,6 +213,8 @@ export function Settings() {
           // 총 전환수/매출 컬럼이 있으면 실제값, 없으면 구매완료로 대체 (파서에서 처리)
           total_conv_count: r.total_conv_count,
           total_conv_revenue: r.total_conv_revenue,
+          cart_count: r.cart_count,
+          cart_revenue: r.cart_revenue,
           media: "naver_gfa",
           source: "gfa_import",
         };
