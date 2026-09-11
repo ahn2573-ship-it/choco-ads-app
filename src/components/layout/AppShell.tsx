@@ -52,9 +52,10 @@ export function AppShell() {
   const { accounts, accountId, setAccountId, media, setMedia } = useAppState();
   const [open, setOpen] = useState(false);
 
-  const MEDIA_TABS: { value: "all" | "naver" | "meta"; label: string }[] = [
+  const MEDIA_TABS: { value: "all" | "naver" | "naver_gfa" | "meta"; label: string }[] = [
     { value: "all", label: "전체" },
-    { value: "naver", label: "네이버" },
+    { value: "naver", label: "네이버 SA" },
+    { value: "naver_gfa", label: "네이버 GFA" },
     { value: "meta", label: "메타" },
   ];
 
