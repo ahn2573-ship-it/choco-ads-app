@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Upload } from "lucide-react";
+import { Plus, Trash2, Upload } from "lucide-react";
 import { useAppState } from "@/hooks/useAppState";
 import { api, supabase } from "@/lib/supabase";
 import { parseResult2File } from "@/lib/excel";
+import { parseGfaFile, classifyGfa, gfaLabelOf } from "@/lib/gfa";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge, Button, Card, CardHeader, ErrorState, Input, Select, TableSkeleton } from "@/components/ui";
 
@@ -28,8 +29,27 @@ export function Settings() {
   const [newLabel, setNewLabel] = useState("");
   const [newMatch, setNewMatch] = useState("contains");
 
+  // 네이버 GFA -----------------------------------------------------------
+  const gfaFileRef = useRef<HTMLInputElement>(null);
+  const [gfaImporting, setGfaImporting] = useState(false);
+  const [gfaMessage, setGfaMessage] = useState<string | null>(null);
+  const [newKw, setNewKw] = useState("");
+  const [newKwGroup, setNewKwGroup] = useState("");
+
   const rules = useQuery({ queryKey: ["alert-rules"], queryFn: api.alertRules });
   const excluded = useQuery({ queryKey: ["excluded"], queryFn: api.excludedAdTypes });
+  const groupOptions = useQuery({ queryKey: ["groups-for-gfa"], queryFn: api.listGroups });
+  const gfaRules = useQuery({
+    queryKey: ["gfa-rules"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("gfa_group_rules")
+        .select("id, keyword, priority, is_active, group_id, product_groups(name)")
+        .order("priority").order("keyword");
+      if (error) throw new Error(error.message);
+      return data ?? [];
+    },
+  });
 
   async function saveRule(id: string, patch: { threshold?: number | null; is_active?: boolean }) {
     await api.saveAlertRule({ id, ...patch });
@@ -123,6 +143,123 @@ export function Settings() {
     } finally {
       setImporting(false);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 네이버 GFA RAW 가져오기 (소재이름 키워드 → 상품군 자동 분류)
+  // -------------------------------------------------------------------------
+  async function importGfa(file: File) {
+    if (!accountId) return;
+    setGfaImporting(true);
+    setGfaMessage(null);
+    try {
+      const { rows, skipped, level } = await parseGfaFile(file);
+      if (!rows.length) {
+        setGfaMessage(
+          "읽을 수 있는 행이 없습니다. 헤더(광고 소재 이름·ID 또는 광고 그룹 이름·ID, " +
+          "그리고 기간·총비용·노출수·클릭수·구매완료 수·구매완료 전환매출액)를 확인하세요.",
+        );
+        return;
+      }
+      // 캠페인 단위 파일은 소재/그룹 이름이 없어 스텝 구분이 불가 → 안내
+      const levelWarn = level === "캠페인"
+        ? " ⚠ 캠페인 단위 파일이라 스텝(상품군) 구분이 어렵습니다. 소재 또는 광고그룹 단위로 내보내세요."
+        : "";
+
+      // 최신 규칙 로드 (업로드 시점 기준으로 분류)
+      const { data: rulesData, error: rErr } = await supabase
+        .from("gfa_group_rules")
+        .select("keyword, group_id, priority, is_active")
+        .eq("is_active", true);
+      if (rErr) throw new Error(rErr.message);
+      const groupName = new Map((groupOptions.data ?? []).map((g) => [g.id, g.name]));
+
+      // 소재 등록(이름 포함) — 미매핑 화면·소재별 성과에서 이름이 보이도록
+      const creById = new Map<string, { name: string; last: string }>();
+      for (const r of rows) {
+        const prev = creById.get(r.creative_id);
+        if (!prev || r.stat_date > prev.last) {
+          creById.set(r.creative_id, { name: r.creative_name, last: r.stat_date });
+        }
+      }
+      await supabase.from("creatives").upsert(
+        [...creById.entries()].map(([creative_id, v]) => ({
+          ad_account_id: accountId, creative_id, creative_name: v.name, last_seen_at: v.last,
+        })),
+        { onConflict: "ad_account_id,creative_id" },
+      );
+
+      let mapped = 0, unmapped = 0;
+      const unmappedNames = new Set<string>();
+      const groups = groupOptions.data ?? [];
+      const payload = rows.map((r) => {
+        const gid = classifyGfa(r.match_text, rulesData ?? [], groups);
+        if (gid) mapped++; else { unmapped++; unmappedNames.add(gfaLabelOf(r.match_text)); }
+        return {
+          ad_account_id: accountId,
+          stat_date: r.stat_date,
+          creative_id: r.creative_id,
+          product_id: null,
+          mall_product_id: null,
+          ad_type_label: gid ? (groupName.get(gid) ?? null) : null,
+          product_group_id: gid,
+          campaign_type: null,
+          impressions: r.impressions,
+          clicks: r.clicks,
+          cost: r.cost,
+          avg_rank: null,
+          conv_count: r.conv_count,
+          conv_revenue: r.conv_revenue,
+          // 총 전환수/매출 컬럼이 있으면 실제값, 없으면 구매완료로 대체 (파서에서 처리)
+          total_conv_count: r.total_conv_count,
+          total_conv_revenue: r.total_conv_revenue,
+          media: "naver_gfa",
+          source: "gfa_import",
+        };
+      });
+
+      for (let i = 0; i < payload.length; i += 500) {
+        const { error } = await supabase.from("ad_performance_daily")
+          .upsert(payload.slice(i, i + 500), {
+            onConflict: "ad_account_id,stat_date,creative_id,dedupe_key",
+          });
+        if (error) throw new Error(error.message);
+      }
+
+      const unmappedHint = unmapped
+        ? ` 미매핑 상품명: ${[...unmappedNames].slice(0, 6).join(", ")}` +
+          ([...unmappedNames].length > 6 ? " 등" : "") +
+          ". 상품군을 만들거나 아래 규칙을 추가한 뒤 같은 파일을 다시 올리면 재분류됩니다."
+        : "";
+      setGfaMessage(
+        `${level} 단위 파일 인식 — ${payload.length}건 반영 (상품군 매칭 ${mapped}건 · 미매핑 ${unmapped}건` +
+        (skipped ? ` · 건너뜀 ${skipped}건` : "") + ")" +
+        unmappedHint +
+        levelWarn,
+      );
+      qc.invalidateQueries();
+    } catch (e) {
+      setGfaMessage(e instanceof Error ? e.message : "가져오기에 실패했습니다.");
+    } finally {
+      setGfaImporting(false);
+    }
+  }
+
+  async function addGfaRule() {
+    if (!newKw.trim() || !newKwGroup) return;
+    const { error } = await supabase.from("gfa_group_rules")
+      .insert({ keyword: newKw.trim(), group_id: newKwGroup, priority: 50 });
+    if (error) { setGfaMessage(error.message); return; }
+    setNewKw(""); setNewKwGroup("");
+    qc.invalidateQueries({ queryKey: ["gfa-rules"] });
+  }
+  async function deleteGfaRule(id: string) {
+    await supabase.from("gfa_group_rules").delete().eq("id", id);
+    qc.invalidateQueries({ queryKey: ["gfa-rules"] });
+  }
+  async function toggleGfaRule(id: string, is_active: boolean) {
+    await supabase.from("gfa_group_rules").update({ is_active }).eq("id", id);
+    qc.invalidateQueries({ queryKey: ["gfa-rules"] });
   }
 
   if (rules.error) return <ErrorState error={rules.error} onRetry={() => rules.refetch()} />;
@@ -243,6 +380,85 @@ export function Settings() {
               총 전환매출액(원) · 날짜
             </p>
           </div>
+        </Card>
+
+        {/* 네이버 GFA RAW 업로드 --------------------------------------------- */}
+        <Card>
+          <CardHeader
+            title="네이버 GFA RAW 업로드"
+            description="GFA 리포트(시간별/기기별/연령별 어느 것이든)를 올리면 소재ID+날짜로 합산되어 들어갑니다"
+          />
+          {gfaMessage && (
+            <div className="mx-4 mt-3 rounded-md border border-line bg-surface-sunken px-3 py-2 text-2xs text-ink-muted">
+              {gfaMessage}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 px-4 py-4">
+            <input
+              ref={gfaFileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) importGfa(f);
+                e.target.value = "";
+              }}
+            />
+            <Button variant="primary" loading={gfaImporting} onClick={() => gfaFileRef.current?.click()}>
+              <Upload className="h-3.5 w-3.5" /> GFA 리포트 올리기
+            </Button>
+            <p className="text-xs text-ink-muted">
+              파일명과 무관하게 <b>열(형식)만 보고</b> 필요한 값을 자동으로 뽑습니다(안 쓰는 열은 무시).
+              소재/그룹/캠페인 단위를 자동 인식하며, 소재이름·그룹이름 속 키워드로 상품군을 분류합니다.
+              예: <b>스텝4.0</b> → 논슬립 스텝 4.0, <b>리타겟</b> → 브랜드. 스텝 구분은 소재 또는 광고그룹 단위 파일에서 됩니다.
+            </p>
+          </div>
+        </Card>
+
+        {/* GFA 상품군 규칙 --------------------------------------------------- */}
+        <Card>
+          <CardHeader
+            title="GFA 상품군 매칭 규칙 (예외·별칭)"
+            description="소재이름 첫 괄호 안 상품명이 상품군 이름과 자동 매칭됩니다. 여기 규칙은 이름이 다를 때만 추가하세요 (예: 리타겟 → 브랜드)"
+          />
+          {gfaRules.isLoading ? <TableSkeleton rows={5} cols={3} /> : (
+            <ul className="divide-y divide-line">
+              {(gfaRules.data ?? []).map((r: any) => (
+                <li key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+                  <input
+                    type="checkbox"
+                    checked={r.is_active}
+                    onChange={(e) => toggleGfaRule(r.id, e.target.checked)}
+                  />
+                  <span className="font-mono text-xs">{r.keyword}</span>
+                  <span className="text-2xs text-ink-faint">→</span>
+                  <span className="flex-1 text-sm">{r.product_groups?.name ?? "(삭제된 상품군)"}</span>
+                  <Badge tone="neutral">우선 {r.priority}</Badge>
+                  <button
+                    onClick={() => deleteGfaRule(r.id)}
+                    className="rounded p-1 text-ink-faint hover:bg-surface-sunken hover:text-ink"
+                    aria-label="규칙 삭제"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="flex items-center gap-2 border-t border-line px-4 py-3">
+            <Input className="h-8 w-32 text-xs" placeholder="키워드 (예: 스텝4.0)"
+              value={newKw} onChange={(e) => setNewKw(e.target.value)} />
+            <span className="text-2xs text-ink-faint">→</span>
+            <Select className="h-8 flex-1 text-xs" value={newKwGroup}
+              onChange={(e) => setNewKwGroup(e.target.value)}>
+              <option value="">상품군 선택</option>
+              {(groupOptions.data ?? []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </Select>
+            <Button size="sm" variant="primary" onClick={addGfaRule} disabled={!newKw.trim() || !newKwGroup}>
+              <Plus className="h-3.5 w-3.5" /> 추가
+            </Button>
+          </div>
+          <p className="border-t border-line px-4 py-2.5 text-2xs text-ink-faint">
+            규칙을 바꾼 뒤에는 해당 날짜의 GFA 파일을 다시 올리면 새 규칙으로 재분류됩니다.
+          </p>
         </Card>
       </div>
     </>
