@@ -204,6 +204,7 @@ export function Dashboard() {
         series={daily.data}
         compareLabel={COMPARE_LABELS[compare]}
         loading={summary.isLoading}
+        media={media}
       />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
@@ -217,6 +218,14 @@ export function Dashboard() {
           loading={daily.isLoading} />
         <DailyTrendChart data={daily.data ?? []} metric="conv_roas" title="일별 구매완료 ROAS"
           format="roas" loading={daily.isLoading} />
+        {(media === "all" || media === "naver_gfa") && (
+          <>
+            <DailyTrendChart data={daily.data ?? []} metric="cart_revenue" title="일별 장바구니 매출"
+              format="won" loading={daily.isLoading} />
+            <DailyTrendChart data={daily.data ?? []} metric="cart_roas" title="일별 장바구니 ROAS"
+              format="roas" loading={daily.isLoading} />
+          </>
+        )}
         <CategoryBarChart
           data={(groupStats.data ?? []).slice(0, 10)}
           nameKey="product_group_name" valueKey="conv_roas"
