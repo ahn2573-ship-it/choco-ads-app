@@ -84,11 +84,11 @@ export function resolveRange(key: Exclude<RangeKey, "custom">, today = seoulToda
       return { from: y, to: y, key };
     }
     case "last3":
-      return { from: addDays(today, -2), to: today, key };
+      return { from: addDays(today, -3), to: addDays(today, -1), key };
     case "last7":
-      return { from: addDays(today, -6), to: today, key };
+      return { from: addDays(today, -7), to: addDays(today, -1), key };
     case "last30":
-      return { from: addDays(today, -29), to: today, key };
+      return { from: addDays(today, -30), to: addDays(today, -1), key };
     case "thisWeek":
       return { from: startOfWeek(today), to: today, key };
     case "lastWeek": {
