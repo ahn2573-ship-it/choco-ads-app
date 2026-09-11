@@ -4,8 +4,9 @@ import { api } from "@/lib/supabase";
 import { resolveRange, type CompareMode, type DateRange } from "@/lib/dateRange";
 import type { AdAccount, ProductGroup } from "@/lib/types";
 
-// 광고 매체 필터. all = 전체(네이버+메타), 이후 매체 추가 시 확장.
-export type MediaFilter = "all" | "naver" | "meta";
+// 광고 매체 필터. all = 전체(모든 매체), naver = 네이버 SA, naver_gfa = 네이버 GFA, meta = 메타.
+// ('naver' 는 기존 SA 데이터와의 호환을 위해 그대로 둔다 — 화면 라벨만 '네이버 SA')
+export type MediaFilter = "all" | "naver" | "naver_gfa" | "meta";
 
 interface AppStateValue {
   accounts: AdAccount[];
