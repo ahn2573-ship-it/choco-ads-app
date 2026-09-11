@@ -64,6 +64,7 @@ export interface ProductStat extends MetricBundle {
   product_group_id: string | null;
   product_group_name: string;
   creative_count: number;
+  media: string | null;   // 'naver' | 'naver_gfa' | 'meta' — GFA 표시용
 }
 
 export interface GroupStat extends MetricBundle {
