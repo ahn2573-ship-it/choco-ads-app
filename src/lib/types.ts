@@ -49,10 +49,17 @@ export interface MetricBundle {
   total_roas: number;
 }
 
-export interface PeriodSummary extends MetricBundle {}
+export interface PeriodSummary extends MetricBundle {
+  cart_count: number;
+  cart_revenue: number;
+  cart_roas: number;
+}
 
 export interface DailyPoint extends MetricBundle {
   stat_date: string;
+  cart_count: number;
+  cart_revenue: number;
+  cart_roas: number;
 }
 
 export interface ProductStat extends MetricBundle {
@@ -65,12 +72,18 @@ export interface ProductStat extends MetricBundle {
   product_group_name: string;
   creative_count: number;
   media: string | null;   // 'naver' | 'naver_gfa' | 'meta' — GFA 표시용
+  cart_count: number;
+  cart_revenue: number;
+  cart_roas: number;
 }
 
 export interface GroupStat extends MetricBundle {
   product_group_id: string | null;
   product_group_name: string;
   product_count: number;
+  cart_count: number;
+  cart_revenue: number;
+  cart_roas: number;
 }
 
 export interface CreativeStat extends MetricBundle {
@@ -79,6 +92,9 @@ export interface CreativeStat extends MetricBundle {
   product_id: string | null;
   display_name: string | null;
   avg_rank: number | null;
+  cart_count: number;
+  cart_revenue: number;
+  cart_roas: number;
 }
 
 export interface UnmappedRow {
