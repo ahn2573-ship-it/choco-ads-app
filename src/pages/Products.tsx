@@ -9,7 +9,7 @@ import { num, pct, roasPct, won } from "@/lib/format";
 import { PageHeader } from "@/components/layout/AppShell";
 import { PeriodFilter } from "@/components/layout/PeriodFilter";
 import { DataTable, type Column } from "@/components/DataTable";
-import { Button, ErrorState, Input, Select } from "@/components/ui";
+import { Button, ErrorState, Input, Select, Badge } from "@/components/ui";
 import type { Bucket, ProductStat } from "@/lib/types";
 
 export const productColumns: Column<ProductStat>[] = [
@@ -22,7 +22,14 @@ export const productColumns: Column<ProductStat>[] = [
     render: (r) => <span className="block max-w-xs truncate text-ink-muted">{r.base_name}</span>,
   },
   { key: "product_group_name", header: "상품군", value: (r) => r.product_group_name },
-  { key: "mall_product_id", header: "쇼핑몰 상품ID", value: (r) => r.mall_product_id ?? "" },
+  {
+    key: "mall_product_id", header: "쇼핑몰 상품ID",
+    value: (r) => (r.media === "naver_gfa" ? "GFA" : (r.mall_product_id ?? "")),
+    render: (r) =>
+      r.media === "naver_gfa"
+        ? <Badge tone="neutral">GFA</Badge>
+        : <>{r.mall_product_id ?? ""}</>,
+  },
   {
     key: "smartstore_product_no", header: "상품번호(스마트스토어)", hidden: true,
     value: (r) => r.smartstore_product_no ?? "",
