@@ -152,7 +152,7 @@ export function ProductDetail() {
         <Card>
           <CardHeader title="연결된 소재별 성과"
             description="이 상품에 매핑된 소재의 기간 합계입니다" />
-          {creatives.isLoading ? <TableSkeleton rows={4} cols={8} /> : (
+          {creatives.isLoading ? <TableSkeleton rows={4} cols={12} /> : (
             <div className="max-h-96 overflow-auto">
               <table className="w-full">
                 <thead>
@@ -165,6 +165,9 @@ export function ProductDetail() {
                     <th className="th text-right">총비용</th>
                     <th className="th text-right">구매완료 매출</th>
                     <th className="th text-right">구매완료 ROAS</th>
+                    <th className="th text-right">장바구니 전환수</th>
+                    <th className="th text-right">장바구니 매출</th>
+                    <th className="th text-right">장바구니 ROAS</th>
                     <th className="th text-right">평균노출순위</th>
                   </tr>
                 </thead>
@@ -179,6 +182,9 @@ export function ProductDetail() {
                       <td className="td text-right font-medium">{won(c.cost)}</td>
                       <td className="td text-right">{won(c.conv_revenue)}</td>
                       <td className="td text-right">{roasPct(c.conv_roas)}</td>
+                      <td className="td text-right">{num(c.cart_count ?? 0)}</td>
+                      <td className="td text-right">{won(c.cart_revenue ?? 0)}</td>
+                      <td className="td text-right">{roasPct(c.cart_roas ?? 0)}</td>
                       <td className="td text-right">{c.avg_rank ? decimal(c.avg_rank) : "—"}</td>
                     </tr>
                   ))}
