@@ -148,10 +148,11 @@ export function Dashboard() {
         description="광고 API 로 수집된 일별 데이터를 기간별로 집계합니다"
         actions={
           <>
-            <Select value={media} onChange={(e) => setMedia(e.target.value as "all" | "naver" | "meta")}
+            <Select value={media} onChange={(e) => setMedia(e.target.value as "all" | "naver" | "naver_gfa" | "meta")}
               className="h-9 text-xs" aria-label="광고 매체">
               <option value="all">전체 매체</option>
-              <option value="naver">네이버</option>
+              <option value="naver">네이버 SA</option>
+              <option value="naver_gfa">네이버 GFA</option>
               <option value="meta">메타</option>
             </Select>
             <Select value={campaignType} onChange={(e) => setCampaignType(e.target.value)}
