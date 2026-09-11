@@ -22,6 +22,8 @@ export interface GfaParsedRow {
   conv_revenue: number;
   total_conv_count: number;
   total_conv_revenue: number;
+  cart_count: number;
+  cart_revenue: number;
 }
 
 export interface GfaRule {
@@ -53,6 +55,8 @@ const METRIC = {
   rev:  ["구매완료 전환매출액", "구매완료 매출"],
   totalConv: ["총 전환수"],
   totalRev:  ["총 전환매출액"],
+  cartConv: ["장바구니 담기 수", "장바구니 전환수", "장바구니담기수"],
+  cartRev:  ["장바구니 전환매출액", "장바구니 매출"],
 };
 
 // 헤더 비교용 정규화: 공백/BOM 제거 + 끝의 단위 괄호 "(원)","(%)" 제거
@@ -150,6 +154,7 @@ export async function parseGfaFile(file: File): Promise<{
       stat_date: date,
       impressions: 0, clicks: 0, cost: 0,
       conv_count: 0, conv_revenue: 0, total_conv_count: 0, total_conv_revenue: 0,
+      cart_count: 0, cart_revenue: 0,
     };
     cur.impressions  += toNum(pick(r, METRIC.imp));
     cur.clicks       += toNum(pick(r, METRIC.clk));
@@ -158,6 +163,8 @@ export async function parseGfaFile(file: File): Promise<{
     cur.conv_revenue += rev;
     cur.total_conv_count   += hasTotal ? toNum(pick(r, METRIC.totalConv)) : conv;
     cur.total_conv_revenue += hasTotal ? toNum(pick(r, METRIC.totalRev))  : rev;
+    cur.cart_count   += toNum(pick(r, METRIC.cartConv));
+    cur.cart_revenue += toNum(pick(r, METRIC.cartRev));
     map.set(key, cur);
   }
 
