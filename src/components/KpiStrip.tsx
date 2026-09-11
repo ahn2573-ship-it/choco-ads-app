@@ -12,6 +12,7 @@ interface KpiDef {
   key: keyof PeriodSummary;
   label: string;
   fmt: Fmt;
+  cartOnly?: boolean;   // 장바구니 지표는 전체·네이버 GFA 탭에서만 노출
 }
 
 const KPIS: KpiDef[] = [
@@ -26,6 +27,9 @@ const KPIS: KpiDef[] = [
   { key: "total_conv_count", label: "총 전환수", fmt: "int" },
   { key: "total_conv_revenue", label: "총 전환매출", fmt: "won" },
   { key: "total_roas", label: "총 전환 ROAS", fmt: "roas" },
+  { key: "cart_count", label: "장바구니 전환수", fmt: "int", cartOnly: true },
+  { key: "cart_revenue", label: "장바구니 매출", fmt: "won", cartOnly: true },
+  { key: "cart_roas", label: "장바구니 ROAS", fmt: "roas", cartOnly: true },
 ];
 
 function format(v: number, fmt: Fmt) {
@@ -44,29 +48,33 @@ const TONE = {
 };
 
 export function KpiStrip({
-  current, previous, series, compareLabel, loading,
+  current, previous, series, compareLabel, loading, media,
 }: {
   current?: PeriodSummary;
   previous?: PeriodSummary;
   series?: DailyPoint[];
   compareLabel: string;
   loading?: boolean;
+  media?: string;
 }) {
+  const showCart = media === "all" || media === "naver_gfa";
+  const kpis = KPIS.filter((k) => !k.cartOnly || showCart);
+
   if (loading || !current) {
     return (
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
-        {KPIS.map((k) => <Skeleton key={k.key} className="h-24 rounded-lg" />)}
+        {kpis.map((k) => <Skeleton key={k.key} className="h-24 rounded-lg" />)}
       </div>
     );
   }
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
-      {KPIS.map((kpi) => {
+      {kpis.map((kpi) => {
         const value = Number(current[kpi.key] ?? 0);
         const prev = previous ? Number(previous[kpi.key] ?? 0) : null;
         const d = prev === null ? null : delta(value, prev, kpi.key as string);
-        const spark = (series ?? []).map((p) => ({ v: Number(p[kpi.key] ?? 0) }));
+        const spark = (series ?? []).map((p) => ({ v: Number((p as unknown as Record<string, unknown>)[kpi.key] ?? 0) }));
 
         return (
           <div key={kpi.key} className="card relative overflow-hidden px-3.5 pb-2 pt-3">
