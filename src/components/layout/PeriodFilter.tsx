@@ -1,7 +1,8 @@
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useAppState } from "@/hooks/useAppState";
 import {
-  COMPARE_LABELS, RANGE_LABELS, resolveRange, seoulToday, type CompareMode, type RangeKey,
+  COMPARE_LABELS, RANGE_LABELS, resolveRange, seoulToday, addDays, diffDays,
+  type CompareMode, type RangeKey,
 } from "@/lib/dateRange";
 import { Select } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -11,6 +12,17 @@ const PRESETS = Object.keys(RANGE_LABELS) as Array<Exclude<RangeKey, "custom">>;
 export function PeriodFilter({ showCompare = true }: { showCompare?: boolean }) {
   const { range, setRange, compare, setCompare } = useAppState();
   const today = seoulToday();
+
+  // 현재 선택 기간의 길이(일수)만큼 통째로 앞/뒤로 이동
+  const span = diffDays(range.from, range.to) + 1; // 포함일수
+  const shiftBy = (dir: -1 | 1) => {
+    let from = addDays(range.from, dir * span);
+    let to = addDays(range.to, dir * span);
+    if (to > today) to = today;      // 미래로는 넘어가지 않게 오늘까지만
+    if (from > today) from = today;
+    setRange({ ...range, from, to, key: "custom" });
+  };
+  const canNext = range.to < today;
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2">
@@ -61,6 +73,27 @@ export function PeriodFilter({ showCompare = true }: { showCompare?: boolean }) 
           className="h-8 rounded-md border border-line bg-surface px-2 text-xs"
           aria-label="종료일"
         />
+
+        {/* 기간 길이만큼 앞뒤로 이동 (예: 하루면 하루씩, 3일치면 3일씩) */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => shiftBy(-1)}
+            title={`이전 ${span}일`}
+            aria-label={`이전 ${span}일`}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-ink-muted hover:bg-surface-sunken"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => shiftBy(1)}
+            disabled={!canNext}
+            title={`다음 ${span}일`}
+            aria-label={`다음 ${span}일`}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-line bg-surface text-ink-muted hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
 
         {showCompare && (
           <Select
