@@ -4,7 +4,7 @@
 const SEOUL = "Asia/Seoul";
 
 export type RangeKey =
-  | "today" | "yesterday" | "last7" | "last30"
+  | "today" | "yesterday" | "last3" | "last7" | "last30"
   | "thisWeek" | "lastWeek" | "thisMonth" | "lastMonth" | "custom";
 
 export interface DateRange {
@@ -66,6 +66,7 @@ function endOfMonth(d: string): string {
 export const RANGE_LABELS: Record<Exclude<RangeKey, "custom">, string> = {
   today: "오늘",
   yesterday: "어제",
+  last3: "최근 3일",
   last7: "최근 7일",
   last30: "최근 30일",
   thisWeek: "이번 주",
@@ -82,6 +83,8 @@ export function resolveRange(key: Exclude<RangeKey, "custom">, today = seoulToda
       const y = addDays(today, -1);
       return { from: y, to: y, key };
     }
+    case "last3":
+      return { from: addDays(today, -2), to: today, key };
     case "last7":
       return { from: addDays(today, -6), to: today, key };
     case "last30":
