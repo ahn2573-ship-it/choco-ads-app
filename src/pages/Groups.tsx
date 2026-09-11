@@ -36,6 +36,9 @@ const columns: Column<GroupStat>[] = [
   { key: "total_conv_count", header: "총 전환수", align: "right", hidden: true, value: (r) => Number(r.total_conv_count), render: (r) => num(r.total_conv_count) },
   { key: "total_conv_revenue", header: "총 전환매출", align: "right", hidden: true, value: (r) => Number(r.total_conv_revenue), render: (r) => won(r.total_conv_revenue) },
   { key: "total_roas", header: "총 전환 ROAS", align: "right", value: (r) => Number(r.total_roas), render: (r) => roasPct(r.total_roas) },
+  { key: "cart_count", header: "장바구니 전환수", align: "right", value: (r) => Number(r.cart_count ?? 0), render: (r) => num(r.cart_count ?? 0) },
+  { key: "cart_revenue", header: "장바구니 매출", align: "right", value: (r) => Number(r.cart_revenue ?? 0), render: (r) => won(r.cart_revenue ?? 0) },
+  { key: "cart_roas", header: "장바구니 ROAS", align: "right", value: (r) => Number(r.cart_roas ?? 0), render: (r) => roasPct(r.cart_roas ?? 0) },
 ];
 
 export function Groups() {
